@@ -6,15 +6,21 @@ from fuzzywuzzy import fuzz  # For fuzzy string matching
 from fuzzywuzzy import process
 from dotenv import load_dotenv
 import os
+import streamlit as st
 
 # --------------------------
 # 🔑 Configuration
 # --------------------------
-load_dotenv()
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME")
-EMBED_MODEL = os.getenv("EMBED_MODEL", "text-embedding-3-small")
+# load_dotenv()
+# PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+# OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+# PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME")
+# EMBED_MODEL = os.getenv("EMBED_MODEL", "text-embedding-3-small")
+
+PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
+OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
+PINECONE_INDEX_NAME = st.secrets["PINECONE_INDEX_NAME"]
+EMBED_MODEL = st.secrets["EMBED_MODEL"] if "EMBED_MODEL" in st.secrets else "text-embedding-3-small"
 
 DEFAULT_CONFIDENCE_SCORE = 0.9
 
