@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 import json
+import altair as alt
 from wine_recommendation import recommend_wines  # Assuming this is your backend module
 
 #######################################
@@ -24,16 +25,6 @@ def display_wine_card(wine_data):
         return
 
     with st.container():
-        # No images for now
-        # col1, col2 = st.columns([0.3, 0.7])  # Adjust ratio for image and text
-        # with col1:
-        #     image_url = wine_data.get('image')
-        #     if image_url:
-        #         st.image(image_url, use_column_width=True)
-        #     else:
-        #         st.image("wine_placeholder.png", caption="No Image Available", use_column_width=True) # Replace with your placeholder
-
-        # Modified for text-only card
         st.markdown(f"**🍷 {wine_data['name']}**", unsafe_allow_html=True)
         st.markdown(f"<small>{wine_data.get('country_of_origin', 'N/A')} - {wine_data.get('category', 'N/A')}</small>", unsafe_allow_html=True)
         st.markdown(f"**Price:** ${wine_data.get('price', 'N/A')}")
@@ -60,7 +51,7 @@ def display_wine_card(wine_data):
 
         description = wine_data.get('description', 'No description available.')
         if len(description) > 150:  # Show a snippet on the card
-            st.markdown(f"<small>{description[:150]}...</small>", unsafe_allow_html=True) # Removed Read More link for now
+            st.markdown(f"<small>{description[:150]}...</small>", unsafe_allow_html=True)
         else:
             st.markdown(f"<small>{description}</small>", unsafe_allow_html=True)
 
@@ -128,30 +119,9 @@ def display_full_wine_details(wine_data, header_level=3):
         description = wine_data.get('description', 'No description available.')
         st.write(f"**Description:** {description}")
 
-    # Tasting notes are now handled in the card
-    # reviews_json_str = wine_data.get('reviews')
-    # if reviews_json_str and reviews_json_str != "[]":
-    #     try:
-    #         reviews = json.loads(reviews_json_str)
-    #         if reviews:
-    #             st.subheader("📝 Tasting Notes/Reviews")
-    #             for review in reviews:
-    #                 author = review.get('author', 'Unknown Author')
-    #                 rating_value_review = review.get('rating', 'N/A')
-    #                 review_text = review.get('review', 'No review text')
-
-    #                 st.markdown(f"**{author} says:**")
-    #                 st.write(f"Rating: {rating_value_review}")
-    #                 st.write(f"> {review_text}")
-    #                 st.write("---")
-    #     except json.JSONDecodeError:
-    #         st.warning("Could not display tasting notes due to formatting issues.")
-
 #######################################
 # 4️⃣ Streamlit App - Main function
 #######################################
-import json # Import JSON for handling reviews
-
 def main():
     st.title("🍷 Wine Recommendation Engine")
 
@@ -177,18 +147,18 @@ def main():
     # Get Recommendations and Display
     #######################################
     if st.button("🍷 Get Recommendations"):
-        if not wine_name: # Simple validation
+        if not wine_name:  # Simple validation
             st.error("Please enter or select a wine name.")
             return
 
         with st.spinner("🔄 Finding the best wines..."):
-            original_wine, recommendations = recommend_wines( # Assuming recommend_wines now returns original wine & RAG explanation
+            original_wine, recommendations = recommend_wines(
                 wine_name=wine_name,
                 top_k=top_k,
                 price_min=min_price,
                 price_max=max_price,
                 min_confidence_score=confidence_score,
-                return_original_wine=True # Keep returning original wine
+                return_original_wine=True  # Keep returning original wine
             )
 
         if not recommendations:
@@ -196,6 +166,7 @@ def main():
         else:
             st.success(f"✅ Found {len(recommendations)} recommendations!")
 
+            # Display original wine details
             st.header("🔍 Original Wine")
             with st.container():
                 col1, col2 = st.columns([0.3, 0.7])
@@ -204,7 +175,7 @@ def main():
                     if image_url:
                         st.image(image_url, use_column_width=True)
                     else:
-                        st.image("wine_placeholder.png", caption="No Image Available", use_column_width=True) # Replace with your placeholder
+                        st.image("wine_placeholder.png", caption="No Image Available", use_column_width=True)
                 with col2:
                     st.markdown(f"**🍷 {original_wine['name']}**", unsafe_allow_html=True)
                     st.markdown(f"<small>{original_wine.get('country_of_origin', 'N/A')} - {original_wine.get('category', 'N/A')}</small>", unsafe_allow_html=True)
@@ -228,18 +199,34 @@ def main():
                         st.markdown("**Rating:** N/A")
                     st.markdown(f"<details><summary>📖 Description</summary><small>{original_wine.get('description', 'No description available.')}</small></details>", unsafe_allow_html=True)
 
+            # Create a DataFrame from recommendations.
+            # Assumes each wine dict contains 'price' and 'similarity_score'
+            df_recommendations = pd.DataFrame(recommendations)
+            
+            # If the recommendations don’t already have 'similarity_score', add one.
+            # For this example, we'll use the confidence_score slider value for all wines.
+            if 'similarity_score' not in df_recommendations.columns:
+                df_recommendations['similarity_score'] = confidence_score
+
+            # Create the Altair scatter plot
+            chart = alt.Chart(df_recommendations).mark_circle(size=100).encode(
+                x=alt.X('price:Q', title='Price'),
+                y=alt.Y('similarity_score:Q', title='Similarity Score'),
+                tooltip=['name', 'price', 'similarity_score']
+            ).properties(
+                width=600,
+                height=400,
+                title="Wine Price vs. Similarity Score"
+            )
+
+            # Display the chart in Streamlit
+            st.altair_chart(chart, use_container_width=True)
 
             st.header("✨ Recommended Wines")
             for i, wine in enumerate(recommendations):
                 with st.container():
                     display_wine_card(wine)
-                    st.write("---") # Separator between recommendations
-
-            # We are now displaying tasting notes in the card, so we can remove this section or keep it for full details
-            # st.subheader("More Details:")
-            # for wine in recommendations:
-            #     display_full_wine_details(wine)
-
+                    st.write("---")  # Separator between recommendations
 
 #######################################
 # 5️⃣ Run Streamlit
