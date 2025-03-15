@@ -11,16 +11,17 @@ import streamlit as st
 # --------------------------
 # 🔑 Configuration
 # --------------------------
-# load_dotenv()
-# PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-# OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-# PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME")
-# EMBED_MODEL = os.getenv("EMBED_MODEL", "text-embedding-3-small")
-
-PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
-OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
-PINECONE_INDEX_NAME = st.secrets["PINECONE_INDEX_NAME"]
-EMBED_MODEL = st.secrets["EMBED_MODEL"] if "EMBED_MODEL" in st.secrets else "text-embedding-3-small"
+if os.getenv("ENV") == "test":
+    load_dotenv()
+    PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+    PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME")
+    EMBED_MODEL = os.getenv("EMBED_MODEL", "text-embedding-3-small")
+else:
+    PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
+    OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
+    PINECONE_INDEX_NAME = st.secrets["PINECONE_INDEX_NAME"]
+    EMBED_MODEL = st.secrets["EMBED_MODEL"] if "EMBED_MODEL" in st.secrets else "text-embedding-3-small"
 
 DEFAULT_CONFIDENCE_SCORE = 0.9
 
@@ -201,6 +202,7 @@ def search_similar_wines(base_wine, tasting_embedding, category_embedding=None, 
             explanation = generate_rag_explanation(base_wine, metadata)
             metadata["rag_explanation"] = explanation
             metadata["score"] = score
+            metadata["similarity_score"] = score
             print(f"🔍 Found similar wine: {metadata.get('id', 'Unknown')} (Score: {score}) - RAG generated") # Indicate RAG generation
 
             ranked_results.append((score, metadata))
