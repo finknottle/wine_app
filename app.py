@@ -1,12 +1,12 @@
 import streamlit as st
-# import pandas as pd # No longer needed if wine_names.csv is fully deprecated
-import os
+# import pandas as pd # Only needed if get_all_wine_names falls back to CSV
+import os # Keep os for potential CSV fallback in wine_recommendation
 import json
 # Ensure wine_recommendation.py is in the same directory or accessible in PYTHONPATH
 import wine_recommendation # This will run the initialization code in wine_recommendation.py
 
 # Set page config - This should be the first Streamlit command
-st.set_page_config(page_title="🍷 AI Wine Recommender", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="AI Somm 🍇 Wine Recommender", layout="wide", initial_sidebar_state="expanded") # Updated title
 
 #######################################
 # Card component (Adapted for new RAG explanation structure)
@@ -18,7 +18,6 @@ def display_wine_card(wine_data, is_base_wine=False, base_wine_summary_blurb=Non
     base_wine_summary_blurb is for the initial blurb of the user's chosen wine.
     """
     if not wine_data or not isinstance(wine_data, dict):
-        # This case should ideally be caught before calling this function
         st.warning("Wine details are missing or in an incorrect format.")
         return
     
@@ -28,8 +27,7 @@ def display_wine_card(wine_data, is_base_wine=False, base_wine_summary_blurb=Non
         with col1:
             image_url = wine_data.get('image_url') 
             if image_url:
-                # Changed use_column_width to use_container_width (effectively by setting use_column_width to 'never' with explicit width)
-                st.image(image_url, width=120)
+                st.image(image_url, width=80) 
             else:
                 st.caption("No image")
 
@@ -45,7 +43,8 @@ def display_wine_card(wine_data, is_base_wine=False, base_wine_summary_blurb=Non
             if wine_data.get('category'): sub_details.append(f"**Category:** {wine_data.get('category')}")
             if wine_data.get('country_of_origin'): sub_details.append(f"**Origin:** {wine_data.get('country_of_origin')}")
             if wine_data.get('size'): sub_details.append(f"**Size:** {wine_data.get('size')}")
-            st.markdown(" | ".join(filter(None, sub_details)))
+            if sub_details: 
+                st.markdown(" | ".join(filter(None, sub_details)))
 
             meta_details = []
             if wine_data.get('price') is not None:
@@ -59,31 +58,28 @@ def display_wine_card(wine_data, is_base_wine=False, base_wine_summary_blurb=Non
                     rating_text += f" ({wine_data.get('num_reviews')} reviews)"
                 meta_details.append(f"**Avg. Rating:** {rating_text}")
 
-            if not is_base_wine and wine_data.get('similarity_score') is not None:
-                 meta_details.append(f"**Similarity:** {wine_data.get('similarity_score'):.3f}")
+            # Removed Similarity Score display from here
+            # if not is_base_wine and wine_data.get('similarity_score') is not None:
+            #      meta_details.append(f"**Similarity:** {wine_data.get('similarity_score'):.3f}")
             
-            st.markdown(" | ".join(filter(None, meta_details)))
+            if meta_details: 
+                st.markdown(" | ".join(filter(None, meta_details)))
 
-            # Display Blurbs
             if is_base_wine and base_wine_summary_blurb:
-                st.markdown(f"**AI Sommelier on Your Pick:** _{base_wine_summary_blurb}_")
+                st.markdown(f"**AI Somm on Your Pick:** _{base_wine_summary_blurb}_")
             
-            rag_data = wine_data.get('rag_explanation_data', {}) # Get the dictionary
+            rag_data = wine_data.get('rag_explanation_data', {}) 
             if not is_base_wine:
                 recommended_blurb = rag_data.get('recommended_wine_blurb')
                 if recommended_blurb:
                     st.markdown(f"**Why You Might Like This:** _{recommended_blurb}_")
 
-            # Detailed Comparison Expander (for recommended wines)
             if not is_base_wine:
                 detailed_comparison_md = rag_data.get('detailed_comparison_markdown')
                 if detailed_comparison_md:
-                    with st.expander("💡 AI Sommelier's Detailed Comparison", expanded=False): # Start collapsed
+                    with st.expander("💡 AI Somm's Detailed Comparison", expanded=False): 
                         st.markdown(detailed_comparison_md, unsafe_allow_html=True)
-                else:
-                    st.caption("No detailed comparison available.")
         
-        # Common details expanders (Description, Reviews) for all cards
         description = wine_data.get('description', '') 
         if description: 
             with st.expander("📖 Product Description"):
@@ -106,87 +102,95 @@ def display_wine_card(wine_data, is_base_wine=False, base_wine_summary_blurb=Non
                                 st.markdown(review_md)
             except json.JSONDecodeError:
                 st.warning("Could not parse tasting notes for display.")
-        st.write("") # Adds a bit of vertical space after each card
+        st.write("") 
 
 #######################################
 # Main Streamlit App Layout
 #######################################
 def main_app_layout():
-    st.title("🍇 AI Wine Recommender")
+    # --- Updated App Name and Introductory Text ---
+    st.title("🍇 AI Somm: Your Personal Wine Guide") 
     st.markdown("""
-    Welcome! I'm your AI Sommelier. 
-    Enter a wine you enjoy in the sidebar, adjust your preferences, and I'll find similar wines for you to explore.
+    Ready to uncork your next favorite wine? 🍾
+    
+    Tell me a wine you already love, and I'll use a dash of AI magic to suggest others that might tantalize your tastebuds. 
+    Adjust the price filter in the sidebar to match your budget. Let the discovery begin!
     """)
+    st.markdown("---")
+
+    wine_names_list = wine_recommendation.get_all_wine_names() 
+    
+    col_select, col_button_space = st.columns([3,1]) 
+
+    with col_select:
+        if not wine_names_list:
+            st.info("Loading wine names for selection... If this is the first run or after a cache refresh, it might take a moment. If no names appear, please check the console for data loading messages from `wine_recommendation.py` and ensure the `get_all_wine_names` function is correctly implemented.")
+            user_selected_wine_name = st.text_input(
+                "Enter a wine name you like (autocomplete list unavailable):", 
+                placeholder="e.g., Caymus Cabernet Sauvignon",
+                key="wine_text_input_fallback"
+            )
+        else:
+            user_selected_wine_name = st.selectbox(
+                "Select or type a wine you enjoy:",
+                options=[""] + wine_names_list,  
+                index=0, 
+                help="Start typing to search, or select from the list.",
+                key="wine_selectbox"
+            )
 
     with st.sidebar:
-        st.header("👨‍🍳 Your Preferences")
-        user_input_wine_name = st.text_input("Enter a wine name you like:", placeholder="e.g., Caymus Cabernet Sauvignon")
-        
-        num_recommendations = st.slider("Number of recommendations:", 1, 10, 3, key="num_recs_slider")
-        
+        st.header("💰 Your Price Filter")
         min_catalog_price = 0.0
-        max_catalog_price = 2000.0 
+        max_slider_price = 200.0 
         
         price_range = st.slider(
-            "Price range ($):", 
+            "Preferred price range ($):", 
             min_value=min_catalog_price, 
-            max_value=max_catalog_price,  
-            value=(min_catalog_price, 500.0), 
-            step=10.0,
+            max_value=max_slider_price,  
+            value=(min_catalog_price, 100.0), 
+            step=5.0, 
             format="$%.0f",
             key="price_slider"
         )
         price_min_filter, price_max_filter = price_range
 
-        confidence_percent = st.slider(
-            "Name Match Confidence (%):", 
-            min_value=50, max_value=100, 
-            value=wine_recommendation.DEFAULT_CONFIDENCE_SCORE, 
-            step=5,
-            help="How closely should the entered wine name match a wine in our catalog? Higher means stricter matching.",
-            key="confidence_slider"
-        )
-        
-        submit_button = st.button("✨ Find My Wine Matches!", type="primary", use_container_width=True)
+    submit_button = st.button("✨ Find My Wine Matches!", type="primary", use_container_width=True)
+    st.markdown("---")
 
-    if submit_button and user_input_wine_name:
-        with st.spinner(f"Consulting the cellar for '{user_input_wine_name}' and its companions... 🥂"):
-            # Updated to receive three values
+
+    if submit_button and user_selected_wine_name:
+        with st.spinner(f"Consulting the cellar for '{user_selected_wine_name}' and its companions... 🥂"):
             base_wine_details, recommended_wines_list, base_wine_blurb = wine_recommendation.recommend_wines_for_streamlit(
-                user_wine_name_input=user_input_wine_name,
-                top_k=num_recommendations,
+                user_wine_name_input=user_selected_wine_name,
+                top_k=5, 
                 price_min=price_min_filter,
                 price_max=price_max_filter,
-                min_confidence_score=confidence_percent
+                min_confidence_score=wine_recommendation.DEFAULT_CONFIDENCE_SCORE 
             )
 
         if base_wine_details:
             st.header(f"Based on Your Selection:")
-            # Pass the base_wine_blurb to the card display
             display_wine_card(base_wine_details, is_base_wine=True, base_wine_summary_blurb=base_wine_blurb)
             st.markdown("---") 
 
             if recommended_wines_list:
-                st.header(f"✨ Your AI Sommelier Recommends:")
+                st.header(f"✨ Your AI Somm Recommends:")
                 
                 num_recs = len(recommended_wines_list)
-                cols_to_display = min(num_recs, 3) 
+                cols_to_display = min(num_recs, 3) if num_recs > 0 else 1 
                 
-                if cols_to_display > 0:
+                if num_recs > 0 :
                     cols = st.columns(cols_to_display)
                     for i, rec_wine_meta in enumerate(recommended_wines_list):
                         with cols[i % cols_to_display]: 
                             display_wine_card(rec_wine_meta, is_base_wine=False)
-                # else: # This case is unlikely if recommended_wines_list is not empty
-                #      st.info("No recommendations to display in columns for the current results.")
 
-            elif not recommended_wines_list: # Base wine found, but no recommendations
-                st.info(f"I found '{base_wine_details.get('name', 'your chosen wine')}', but couldn't find other similar wines matching all your filter criteria. Perhaps try adjusting the price range or other filters?")
+            elif not recommended_wines_list: 
+                st.info(f"I found '{base_wine_details.get('name', 'your chosen wine')}', but couldn't find other similar wines matching all your filter criteria. Perhaps try adjusting the price range?")
         
-        # If base_wine_details is None, the message is handled by recommend_wines_for_streamlit via st.warning
-
-    elif submit_button and not user_input_wine_name:
-        st.warning("Please enter a wine name to get recommendations.")
+    elif submit_button and not user_selected_wine_name:
+        st.warning("Please select or enter a wine name to get recommendations.")
     
 if __name__ == "__main__":
     main_app_layout()
