@@ -47,7 +47,7 @@ mdurl==0.1.2
 multidict==6.1.0
 narwhals==1.28.0
 numpy==2.2.3
-openai>=1.78.0  # Corrected version (or use openai>=1.0.0)
+openai==1.78.0
 openpyxl==3.1.5
 outcome==1.3.0.post0
 packaging==24.2
@@ -55,7 +55,7 @@ pandas==2.2.3
 pandas-stubs==2.2.3.241126
 parsel==1.10.0
 pillow==11.1.0
-pinecone==6.0.1 # This is the correct package name for recent versions
+pinecone==6.0.1
 pinecone-plugin-interface==0.0.7
 plotly==6.0.0
 propcache==0.2.1
@@ -75,7 +75,6 @@ pyparsing==3.2.1
 PySocks==1.7.1
 python-dateutil==2.9.0.post0
 python-dotenv==1.0.1
-python-Levenshtein # Added for fuzzywuzzy (optional but recommended)
 pytz==2025.1
 queuelib==1.7.0
 referencing==0.36.2
