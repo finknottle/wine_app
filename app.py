@@ -28,7 +28,8 @@ def display_wine_card(wine_data, is_base_wine=False, base_wine_summary_blurb=Non
         with col1:
             image_url = wine_data.get('image_url') 
             if image_url:
-                st.image(image_url, width=100, use_column_width='auto') 
+                # Changed use_column_width to use_container_width (effectively by setting use_column_width to 'never' with explicit width)
+                st.image(image_url, width=120)
             else:
                 st.caption("No image")
 

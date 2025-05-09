@@ -177,7 +177,6 @@ def generate_enhanced_rag_explanation(base_wine_metadata, recommended_wine_metad
     """
     Generates a structured explanation including blurbs and detailed comparison.
     Returns a dictionary.
-    Uses module-level helper functions: get_field, get_review_snippets_for_prompt.
     """
     base_name = get_field(base_wine_metadata, "name", "The Selected Wine") 
     rec_name = get_field(recommended_wine_metadata, "name", "This Recommendation") 
@@ -208,41 +207,42 @@ Details: {rec_info_for_prompt}
 
 **Instructions:**
 
-1.  **Base Wine Blurb:** In 1-2 sentences, summarize what the user likely enjoys about "{base_name}", based on its details. Start with "You seem to enjoy wines that...".
+1.  **Base Wine Blurb:** In 1-2 sentences, summarize what the user likely enjoys about "{base_name}", based on its details (e.g., "You seem to enjoy wines that are [key characteristic 1], with notes of [key flavor/aroma], and a [key mouthfeel/body] character."). Focus on positive attributes inferable from the provided details.
 
-2.  **Recommended Wine Blurb:** In 1-2 sentences, explain why "{rec_name}" is a good recommendation for someone who likes "{base_name}". Frame it as an appealing alternative. Start with "If you like {base_name}, you might also appreciate {rec_name} because...".
+2.  **Recommended Wine Blurb:** In 1-2 sentences, explain why "{rec_name}" is a good recommendation for someone who likes "{base_name}". Specifically highlight 1-2 key characteristics of "{rec_name}" that align with the likely preferences derived from "{base_name}" (e.g., "If you like {base_name}'s [specific quality like 'bold fruit' or 'crisp acidity'], you'll appreciate that {rec_name} also offers [similar/complementary specific quality like 'a similar rich dark fruit core' or 'a refreshing citrus zest'], making it an excellent alternative to explore."). Be specific about the shared or complementary appeal.
 
-3.  **Detailed Comparison:** Provide a detailed comparison. For each characteristic below, briefly describe both wines or their similarity. If information is not directly available from the details, infer it where possible or state 'Not specified'. Use Markdown H4 headings (####) for each characteristic.
+3.  **Detailed Comparison:** For this part, ONLY provide the Markdown formatted detailed comparison based on the categories below. Do NOT include any introductory text before the first H4 heading for this section.
+    For each characteristic, describe the **Recommended Wine ("{rec_name}")** and how its attributes might appeal to someone who enjoys the **Base Wine ("{base_name}")**. If information for the recommended wine is not directly available, infer it where possible based on its category, origin, and reviews, or state 'Typically, wines like this offer...' or 'Not specified'. Use Markdown H4 headings (####) for each characteristic.
 
     #### 🍬 Sweetness
-    (e.g., Dry, Off-Dry, Medium, Sweet. How is it perceived?)
+    (Describe "{rec_name}"'s perceived sweetness (e.g., Dry, Off-Dry, hints of sweetness). How does this compare or relate to the style of "{base_name}"?)
 
     #### 🍋 Acidity
-    (e.g., Low/Mellow, Medium, High/Crisp/Zesty. Does it make the wine refreshing?)
+    (Describe "{rec_name}"'s acidity (e.g., Bright and crisp, mellow, balanced). Would this provide a similar refreshment or structure to "{base_name}"?)
 
     #### 🧱 Tannins
-    (For reds primarily: Low, Medium, High. Texture: Soft/Velvety, Firm/Grippy, Astringent.)
+    (For reds primarily: Describe "{rec_name}"'s tannins (e.g., Smooth and velvety, firm and structured, subtle). How might these tannins appeal to a fan of "{base_name}"?)
 
     #### 🍇 Fruity Flavor Profile
-    (e.g., Predominant fruit notes like red berries, blackcurrant, citrus, apple, stone fruit, tropical fruits. Are they ripe, tart, jammy?)
+    (Describe the dominant fruit notes in "{rec_name}" (e.g., Ripe dark fruits, fresh red berries, zesty citrus). Are these flavors in a similar family or complementary to those likely found in "{base_name}"?)
 
     #### ⚖️ Body
-    (e.g., Light, Medium, or Full. Perceived weight and richness in the mouth.)
+    (Describe "{rec_name}"'s body (e.g., Light-bodied and elegant, medium-bodied and versatile, full-bodied and rich). How does this align with the expected body of "{base_name}"?)
 
     #### 👃 Nose/Aroma Profile
-    (e.g., Dominant aromas beyond primary fruit: floral, herbal, spicy, earthy, mineral, oak influences like vanilla/toast, yeasty notes.)
+    (Describe "{rec_name}"'s key aromas beyond fruit (e.g., Floral notes, spicy undertones, earthy complexity, oak influences). Would these aromas be appreciated by someone who likes "{base_name}"?)
 
     #### 🎨 Color
-    (Infer from category or description if possible, e.g., 'Deep Ruby Red', 'Pale Straw Yellow'. Otherwise, 'Not specified'.)
+    (Describe "{rec_name}"'s likely color based on its type/category (e.g., 'A vibrant ruby red typical of...', 'A pale lemon-green hue suggesting...'). If not inferable, state 'Color not specified, but typical for its style.')
     
     #### 🌍 Origin & Style Context
-    (Briefly note if their origin, region, or general style contribute to their similarity or offer an interesting contrast.)
+    (Comment on how "{rec_name}"'s origin or style (e.g., 'Classic Bordeaux style', 'New World fruit expression') relates to or complements the style of "{base_name}".)
 
 **Output Format:**
-Start with "BASE_WINE_BLURB:", followed by the blurb.
-Then "RECOMMENDED_WINE_BLURB:", followed by the blurb.
-Then "DETAILED_COMPARISON_MARKDOWN:", followed by the Markdown formatted detailed comparison.
-Use "||END_SECTION||" as a separator between these three parts.
+You MUST respond with exactly three parts, separated by "||END_SECTION||":
+BASE_WINE_BLURB: [Your 1-2 sentence blurb for the base wine here]||END_SECTION||
+RECOMMENDED_WINE_BLURB: [Your 1-2 sentence blurb for the recommended wine here]||END_SECTION||
+DETAILED_COMPARISON_MARKDOWN: [Your Markdown for the detailed comparison starting directly with '#### 🍬 Sweetness' and containing ONLY the detailed comparison content here]
 """
     explanation_dict = {
         "base_wine_blurb": f"Based on its profile, you likely enjoy {base_name} for its general characteristics.",
@@ -254,7 +254,7 @@ Use "||END_SECTION||" as a separator between these three parts.
             model="gpt-4o-mini", 
             messages=[{"role": "user", "content": prompt}],
             temperature=0.4, 
-            max_tokens=800 # Increased max_tokens for the more detailed breakdown
+            max_tokens=950 # Slightly increased max_tokens for safety
         )
         full_response_text = response.choices[0].message.content.strip()
         
@@ -262,14 +262,18 @@ Use "||END_SECTION||" as a separator between these three parts.
         if len(parts) == 3:
             base_blurb_text = parts[0].replace("BASE_WINE_BLURB:", "").strip()
             rec_blurb_text = parts[1].replace("RECOMMENDED_WINE_BLURB:", "").strip()
+            # The third part is now expected to be purely the Markdown for detailed comparison
             detailed_markdown_text = parts[2].replace("DETAILED_COMPARISON_MARKDOWN:", "").strip()
+
 
             if base_blurb_text: explanation_dict["base_wine_blurb"] = base_blurb_text
             if rec_blurb_text: explanation_dict["recommended_wine_blurb"] = rec_blurb_text
             if detailed_markdown_text: explanation_dict["detailed_comparison_markdown"] = detailed_markdown_text
         else:
-            print(f"⚠️ LLM response format unexpected. Parts found: {len(parts)}. Using fallback for RAG.")
-            explanation_dict["detailed_comparison_markdown"] = "**AI Sommelier Notes:**\n\n" + full_response_text
+            print(f"⚠️ LLM response format unexpected. Parts found: {len(parts)}. Full response: {full_response_text[:500]}... Using fallback for RAG.")
+            # If parsing fails, put the whole response into detailed comparison as a fallback,
+            # hoping the user can still make sense of it or it contains some of the markdown.
+            explanation_dict["detailed_comparison_markdown"] = "**AI Sommelier Notes (Unable to parse structured response):**\n\n" + full_response_text
 
     except Exception as e:
         print(f"⚠️ RAG Explanation generation failed: {e}")
@@ -334,7 +338,7 @@ Based on the following details for the wine "{get_field(base_wine_metadata, 'nam
 - Description: {get_field(base_wine_metadata, 'description', 'No description.')[:300]}...
 - Reviews: {get_review_snippets_for_prompt(base_wine_metadata.get('reviews_json', '[]'))}
 
-In 1-2 sentences, summarize what someone likely enjoys about this wine. Start with "You seem to enjoy wines that...".
+In 1-2 sentences, summarize what someone likely enjoys about this wine. Focus on positive attributes inferable from the provided details. Start with "You seem to enjoy wines that...".
 """
     base_wine_blurb = f"You likely enjoy {get_field(base_wine_metadata, 'name', 'this wine')} for its general characteristics and profile." 
     try:
