@@ -1,295 +1,191 @@
 import streamlit as st
-import pandas as pd
+# import pandas as pd # No longer needed if wine_names.csv is fully deprecated
 import os
 import json
-import altair as alt
-from wine_recommendation import recommend_wines  # Assuming this is your backend module
+# Ensure wine_recommendation.py is in the same directory or accessible in PYTHONPATH
+import wine_recommendation # This will run the initialization code in wine_recommendation.py
 
-# Set page config at the very top
-st.set_page_config(page_title="Wine Recommender", layout="wide")
-
-#######################################
-# 1️⃣ Load Wine Names for Autocomplete
-#######################################
-def load_wine_names(csv_path="wine_names.csv"):
-    """Load unique wine names from CSV for autocomplete."""
-    if not os.path.exists(csv_path):
-        return []
-    df = pd.read_csv(csv_path)
-    return sorted(df["name"].dropna().unique().tolist())
+# Set page config - This should be the first Streamlit command
+st.set_page_config(page_title="🍷 AI Wine Recommender", layout="wide", initial_sidebar_state="expanded")
 
 #######################################
-# 2️⃣ Helper function to display wine details in a card
+# Card component (Adapted for new RAG explanation structure)
 #######################################
-def display_wine_card(wine_data):
-    """Displays wine details in a card format."""
-    if not wine_data:
-        st.error("Wine details not available.")
+def display_wine_card(wine_data, is_base_wine=False, base_wine_summary_blurb=None):
+    """
+    Displays a wine card with details.
+    wine_data is expected to be a dictionary (metadata from Pinecone).
+    base_wine_summary_blurb is for the initial blurb of the user's chosen wine.
+    """
+    if not wine_data or not isinstance(wine_data, dict):
+        # This case should ideally be caught before calling this function
+        st.warning("Wine details are missing or in an incorrect format.")
         return
+    
+    with st.container(border=True):
+        col1, col2 = st.columns([1, 4]) 
 
-    with st.container():
-        st.markdown(f"**🍷 {wine_data['name']}**", unsafe_allow_html=True)
-        st.markdown(f"<small>{wine_data.get('country_of_origin', 'N/A')} - {wine_data.get('category', 'N/A')}</small>", unsafe_allow_html=True)
-        st.markdown(f"**Price:** ${wine_data.get('price', 'N/A')}")
+        with col1:
+            image_url = wine_data.get('image_url') 
+            if image_url:
+                st.image(image_url, width=100, use_column_width='auto') 
+            else:
+                st.caption("No image")
+
+        with col2:
+            card_title = wine_data.get('name', 'Unknown Wine')
+            if is_base_wine:
+                st.subheader(f"⭐ Your Choice: {card_title}")
+            else:
+                st.subheader(card_title) 
+            
+            sub_details = []
+            if wine_data.get('brand'): sub_details.append(f"**Producer:** {wine_data.get('brand')}")
+            if wine_data.get('category'): sub_details.append(f"**Category:** {wine_data.get('category')}")
+            if wine_data.get('country_of_origin'): sub_details.append(f"**Origin:** {wine_data.get('country_of_origin')}")
+            if wine_data.get('size'): sub_details.append(f"**Size:** {wine_data.get('size')}")
+            st.markdown(" | ".join(filter(None, sub_details)))
+
+            meta_details = []
+            if wine_data.get('price') is not None:
+                meta_details.append(f"**Price:** ${wine_data.get('price'):.2f}")
+            
+            if wine_data.get('avg_rating') is not None:
+                rating_text = f"{wine_data.get('avg_rating'):.1f}"
+                if wine_data.get('best_rating_scale') is not None:
+                    rating_text += f" / {wine_data.get('best_rating_scale'):.0f}"
+                if wine_data.get('num_reviews') is not None:
+                    rating_text += f" ({wine_data.get('num_reviews')} reviews)"
+                meta_details.append(f"**Avg. Rating:** {rating_text}")
+
+            if not is_base_wine and wine_data.get('similarity_score') is not None:
+                 meta_details.append(f"**Similarity:** {wine_data.get('similarity_score'):.3f}")
+            
+            st.markdown(" | ".join(filter(None, meta_details)))
+
+            # Display Blurbs
+            if is_base_wine and base_wine_summary_blurb:
+                st.markdown(f"**AI Sommelier on Your Pick:** _{base_wine_summary_blurb}_")
+            
+            rag_data = wine_data.get('rag_explanation_data', {}) # Get the dictionary
+            if not is_base_wine:
+                recommended_blurb = rag_data.get('recommended_wine_blurb')
+                if recommended_blurb:
+                    st.markdown(f"**Why You Might Like This:** _{recommended_blurb}_")
+
+            # Detailed Comparison Expander (for recommended wines)
+            if not is_base_wine:
+                detailed_comparison_md = rag_data.get('detailed_comparison_markdown')
+                if detailed_comparison_md:
+                    with st.expander("💡 AI Sommelier's Detailed Comparison", expanded=False): # Start collapsed
+                        st.markdown(detailed_comparison_md, unsafe_allow_html=True)
+                else:
+                    st.caption("No detailed comparison available.")
         
-        rating_json_str = wine_data.get('aggregateRating')
-        rating = None
-        if rating_json_str:
-            try:
-                json_string_level_1_decoded = json.loads(rating_json_str)
-                try:
-                    rating = json.loads(json_string_level_1_decoded)
-                except json.JSONDecodeError:
-                    rating = None
-            except json.JSONDecodeError:
-                rating = None
+        # Common details expanders (Description, Reviews) for all cards
+        description = wine_data.get('description', '') 
+        if description: 
+            with st.expander("📖 Product Description"):
+                st.write(description)
 
-        if rating and isinstance(rating, dict):
-            rating_value = rating.get('ratingValue', 'N/A')
-            rating_count = rating.get('ratingCount', 'N/A')
-            st.markdown(f"**Rating:** {rating_value} ({rating_count} reviews)")
-        else:
-            st.markdown("**Rating:** N/A")
-
-        description = wine_data.get('description', 'No description available.')
-        if len(description) > 150:
-            st.markdown(f"<small>{description[:150]}...</small>", unsafe_allow_html=True)
-        else:
-            st.markdown(f"<small>{description}</small>", unsafe_allow_html=True)
-
-        rag_explanation = wine_data.get('rag_explanation')
-        if rag_explanation:
-            sentences = rag_explanation.split('. ')
-            first_two_sentences = '. '.join(sentences[:2]) + '...' if len(sentences) > 2 else rag_explanation
-            remaining_explanation = '. '.join(sentences[2:]) if len(sentences) > 2 else ""
-            with st.expander("🤔 Why similar"):
-                st.markdown(f"<small>{first_two_sentences} <br> {remaining_explanation}</small>", unsafe_allow_html=True)
-        else:
-            st.markdown("<small>No explanation available for why this wine is similar.</small>", unsafe_allow_html=True)
-
-        reviews_json_str = wine_data.get('reviews')
+        reviews_json_str = wine_data.get('reviews_json', '[]')
         if reviews_json_str and reviews_json_str != "[]":
             try:
                 reviews = json.loads(reviews_json_str)
-                if reviews:
-                    with st.expander("📝 Tasting Notes"):
-                        for review in reviews:
-                            author = review.get('author', 'Anonymous')
-                            rating = review.get('rating', 'N/A')
-                            review_text = review.get('review', '')
-                            st.markdown(f"**{author}** - Rating: {rating}")
-                            st.markdown(f"<small>{review_text}</small>", unsafe_allow_html=True)
-                            st.write("---")
+                if isinstance(reviews, list) and reviews: 
+                    with st.expander("📝 Tasting Notes & Critic Reviews"):
+                        for review in reviews[:3]: 
+                            if isinstance(review, dict):
+                                author = review.get('author', 'Anonymous')
+                                rating = review.get('rating')
+                                review_text = review.get('review', '')
+                                review_md = f"**{author}**"
+                                if rating is not None: review_md += f" (Rating: {rating})"
+                                review_md += f": {review_text}"
+                                st.markdown(review_md)
             except json.JSONDecodeError:
-                st.warning("Could not display tasting notes due to formatting issues.")
+                st.warning("Could not parse tasting notes for display.")
+        st.write("") # Adds a bit of vertical space after each card
 
 #######################################
-# 3️⃣ Helper function to display full wine details with reviews
+# Main Streamlit App Layout
 #######################################
-def display_full_wine_details(wine_data, header_level=3):
-    """Displays full wine details, including reviews."""
-    if not wine_data:
-        st.error("Wine details not available.")
-        return
+def main_app_layout():
+    st.title("🍇 AI Wine Recommender")
+    st.markdown("""
+    Welcome! I'm your AI Sommelier. 
+    Enter a wine you enjoy in the sidebar, adjust your preferences, and I'll find similar wines for you to explore.
+    """)
 
-    st.markdown(
-        f"<h{header_level} id='wine-details-{wine_data.get('name').replace(' ', '-')}' style='padding-top: 20px;'>🍷 {wine_data['name']}</h{header_level}>",
-        unsafe_allow_html=True
-    )
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.write(f"**Country:** {wine_data.get('country_of_origin', 'N/A')}")
-        st.write(f"**Category:** {wine_data.get('category', 'N/A')}")
-        st.write(f"**Price:** ${wine_data.get('price', 'N/A')}")
+    with st.sidebar:
+        st.header("👨‍🍳 Your Preferences")
+        user_input_wine_name = st.text_input("Enter a wine name you like:", placeholder="e.g., Caymus Cabernet Sauvignon")
         
-        rating_json_str = wine_data.get('aggregateRating')
-        rating = None
-        if rating_json_str:
-            try:
-                json_string_level_1_decoded = json.loads(rating_json_str)
-                try:
-                    rating = json.loads(json_string_level_1_decoded)
-                except json.JSONDecodeError:
-                    rating = None
-            except json.JSONDecodeError:
-                rating = None
+        num_recommendations = st.slider("Number of recommendations:", 1, 10, 3, key="num_recs_slider")
+        
+        min_catalog_price = 0.0
+        max_catalog_price = 2000.0 
+        
+        price_range = st.slider(
+            "Price range ($):", 
+            min_value=min_catalog_price, 
+            max_value=max_catalog_price,  
+            value=(min_catalog_price, 500.0), 
+            step=10.0,
+            format="$%.0f",
+            key="price_slider"
+        )
+        price_min_filter, price_max_filter = price_range
 
-        if rating and isinstance(rating, dict):
-            rating_value = rating.get('ratingValue', 'N/A')
-            rating_count = rating.get('ratingCount', 'N/A')
-            st.write(f"**Rating:** {rating_value} ({rating_count} reviews)")
-        else:
-            st.write("**Rating:** N/A")
+        confidence_percent = st.slider(
+            "Name Match Confidence (%):", 
+            min_value=50, max_value=100, 
+            value=wine_recommendation.DEFAULT_CONFIDENCE_SCORE, 
+            step=5,
+            help="How closely should the entered wine name match a wine in our catalog? Higher means stricter matching.",
+            key="confidence_slider"
+        )
+        
+        submit_button = st.button("✨ Find My Wine Matches!", type="primary", use_container_width=True)
 
-    with col2:
-        description = wine_data.get('description', 'No description available.')
-        st.write(f"**Description:** {description}")
-
-#######################################
-# 4️⃣ Streamlit App - Main function
-#######################################
-def main():
-    st.title("🍷 AI Sommelier - Find similar wines")
-
-    possible_wine_names = load_wine_names()
-    # st.subheader("🔍 Input Parameters")
-
-    # 1️⃣ Wine Name Input
-    wine_name = st.selectbox("Wine Name", options=possible_wine_names) if possible_wine_names else st.text_input("Wine Name")
-
-    # # 2️⃣ Price Range
-    # min_price_slider, max_price_slider = st.slider("Price Range", 0, 1000, (0, 1000))
-
-    # # 3️⃣ Number of Recommendations
-    # top_k = st.slider("Number of Recommendations", min_value=1, max_value=20, value=5)
-
-    # # 4️⃣ Confidence Score remains a float between 0.0 and 1.0
-    # confidence_score = st.slider("Confidence Score (Min)", min_value=0.0, max_value=1.0, value=0.9, step=0.05)
-
-    # st.write("---")
-
-    #######################################
-    # Get Recommendations and Display
-    #######################################
-    if st.button("🍷 Find Similar Wines"):
-        if not wine_name:
-            st.error("Please enter or select a wine name.")
-            return
-
-        with st.spinner("🔄 Finding the best wines..."):
-            # Set default values for the inputs
-            min_price_slider = min_price_slider if 'min_price_slider' in locals() else 0
-            max_price_slider = max_price_slider if 'max_price_slider' in locals() else 200
-            top_k = top_k if 'top_k' in locals() else 10
-            confidence_score = confidence_score if 'confidence_score' in locals() else 0.9
-
-            original_wine, recommendations = recommend_wines(
-                wine_name=wine_name,
-                top_k=top_k,
-                price_min=min_price_slider,
-                price_max=max_price_slider,
-                min_confidence_score=confidence_score,
-                return_original_wine=True
+    if submit_button and user_input_wine_name:
+        with st.spinner(f"Consulting the cellar for '{user_input_wine_name}' and its companions... 🥂"):
+            # Updated to receive three values
+            base_wine_details, recommended_wines_list, base_wine_blurb = wine_recommendation.recommend_wines_for_streamlit(
+                user_wine_name_input=user_input_wine_name,
+                top_k=num_recommendations,
+                price_min=price_min_filter,
+                price_max=price_max_filter,
+                min_confidence_score=confidence_percent
             )
 
-        if not recommendations:
-            st.error("❌ No recommendations found.")
-        else:
-            st.success(f"✅ Found {len(recommendations)} recommendations!")
+        if base_wine_details:
+            st.header(f"Based on Your Selection:")
+            # Pass the base_wine_blurb to the card display
+            display_wine_card(base_wine_details, is_base_wine=True, base_wine_summary_blurb=base_wine_blurb)
+            st.markdown("---") 
 
-            # Display original wine details
-            st.header("🔍 Original Wine")
-            with st.container():
-                col1, col2 = st.columns([0.1, 0.7])
-                with col1:
-                    image_url = original_wine.get('image')
-                    if image_url:
-                        st.image(image_url, width=20)
-                    else:
-                        st.image("wine_placeholder.png", caption="No Image Available", width=20)
-                with col2:
-                    st.markdown(f"**🍷 {original_wine['name']}**", unsafe_allow_html=True)
-                    st.markdown(
-                        f"<small>{original_wine.get('country_of_origin', 'N/A')} - {original_wine.get('category', 'N/A')}</small>",
-                        unsafe_allow_html=True
-                    )
-                    st.markdown(f"**Price:** ${original_wine.get('price', 'N/A')}")
-                    rating_json_str = original_wine.get('aggregateRating')
-                    rating = None
-                    if rating_json_str:
-                        try:
-                            json_string_level_1_decoded = json.loads(rating_json_str)
-                            try:
-                                rating = json.loads(json_string_level_1_decoded)
-                            except json.JSONDecodeError:
-                                rating = None
-                        except json.JSONDecodeError:
-                            rating = None
-                    if rating and isinstance(rating, dict):
-                        rating_value = rating.get('ratingValue', 'N/A')
-                        rating_count = rating.get('ratingCount', 'N/A')
-                        st.markdown(f"**Rating:** {rating_value} ({rating_count} reviews)")
-                    else:
-                        st.markdown("**Rating:** N/A")
-                    st.markdown(
-                        f"<details><summary>📖 Description</summary><small>{original_wine.get('description', 'No description available.')}</small></details>",
-                        unsafe_allow_html=True
-                    )
-                    # Display tasting notes for the original wine
-                    reviews_json_str = original_wine.get('reviews')
-                    if reviews_json_str and reviews_json_str != "[]":
-                        try:
-                            reviews = json.loads(reviews_json_str)
-                            if reviews:
-                                tasting_notes = "\n".join([review.get('review', '') for review in reviews])
-                                if tasting_notes:
-                                    with st.expander("📝 Tasting Notes"):
-                                        st.markdown(f"<small>{tasting_notes}</small>", unsafe_allow_html=True)
-                        except json.JSONDecodeError:
-                            st.warning("Could not display tasting notes due to formatting issues.")
+            if recommended_wines_list:
+                st.header(f"✨ Your AI Sommelier Recommends:")
+                
+                num_recs = len(recommended_wines_list)
+                cols_to_display = min(num_recs, 3) 
+                
+                if cols_to_display > 0:
+                    cols = st.columns(cols_to_display)
+                    for i, rec_wine_meta in enumerate(recommended_wines_list):
+                        with cols[i % cols_to_display]: 
+                            display_wine_card(rec_wine_meta, is_base_wine=False)
+                # else: # This case is unlikely if recommended_wines_list is not empty
+                #      st.info("No recommendations to display in columns for the current results.")
 
-            # Create a DataFrame from recommendations.
-            df_recommendations = pd.DataFrame(recommendations)
-            df_recommendations.columns = df_recommendations.columns.astype(str)
-            
-            # If recommendations don’t have 'similarity_score', set them to the slider value.
-            if 'similarity_score' not in df_recommendations.columns:
-                df_recommendations['similarity_score'] = confidence_score
+            elif not recommended_wines_list: # Base wine found, but no recommendations
+                st.info(f"I found '{base_wine_details.get('name', 'your chosen wine')}', but couldn't find other similar wines matching all your filter criteria. Perhaps try adjusting the price range or other filters?")
+        
+        # If base_wine_details is None, the message is handled by recommend_wines_for_streamlit via st.warning
 
-            # Original wine's similarity score remains as 1.0 (100%)
-            original_wine['similarity_score'] = 1.0
-            
-            # Concatenate original wine with recommendations.
-            df_recommendations = pd.concat([df_recommendations, pd.DataFrame([original_wine])], ignore_index=True)
-            df_recommendations['price'] = pd.to_numeric(df_recommendations['price'], errors='coerce')
-            df_recommendations = df_recommendations.dropna(subset=['price'])
-            
-            # Convert similarity score to percentage for display (multiply by 100)
-            df_recommendations['similarity_percentage'] = df_recommendations['similarity_score'] * 100
-
-            # Set chart axis domains (adding a small margin)
-            min_price_chart = df_recommendations['price'].min() - 10
-            max_price_chart = df_recommendations['price'].max() + 10
-            min_similarity_pct = df_recommendations['similarity_percentage'].min() - 5
-            max_similarity_pct = df_recommendations['similarity_percentage'].max() + 5
-
-            # Create the Altair scatter plot using the similarity_percentage field
-            chart = alt.Chart(df_recommendations).mark_circle(size=100).encode(
-                x=alt.X('price:Q', title='Price', scale=alt.Scale(domain=[min_price_chart, max_price_chart])),
-                y=alt.Y('similarity_percentage:Q', 
-                        title='Similarity Score (%)', 
-                        scale=alt.Scale(domain=[min_similarity_pct, max_similarity_pct]),
-                        axis=alt.Axis(format=".2f")),  # Shows two decimals
-                color=alt.condition(
-                    alt.datum.name == original_wine['name'],
-                    alt.value('red'),  # Original wine in red
-                    alt.value('blue')  # Recommended wines in blue
-                ),
-                tooltip=[
-                    'name', 
-                    'price', 
-                    alt.Tooltip('similarity_percentage:Q', title='Similarity Score (%)', format=".2f")
-                ]
-            ).properties(
-                width=600,
-                height=400,
-                title="Wine Price vs. Similarity Score (%)"
-            )
-
-
-            st.altair_chart(chart, use_container_width=True)
-
-            st.header("✨ Recommended Wines")
-            for i, wine in enumerate(recommendations):
-                with st.container():
-                    try:
-                        wine_data = json.loads(wine) if isinstance(wine, str) else wine
-                        display_wine_card(wine_data)
-                    except json.JSONDecodeError:
-                        st.error("Error parsing wine data.")
-                    st.write("---")
-
+    elif submit_button and not user_input_wine_name:
+        st.warning("Please enter a wine name to get recommendations.")
+    
 if __name__ == "__main__":
-    main()
+    main_app_layout()
