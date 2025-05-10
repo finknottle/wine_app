@@ -9,7 +9,7 @@ st.set_page_config(page_title="AI Somm 🍇 Wine Recommender", layout="wide", in
 #######################################
 # Card component 
 #######################################
-def display_wine_card(wine_data, card_key_prefix, is_base_wine=False, base_wine_summary_blurb=None, base_wine_for_comparison=None, rag_explanation_content=None):
+def display_wine_card(wine_data, card_key_prefix, is_base_wine=False, base_wine_summary_blurb=None, rag_explanation_content=None):
     """
     Displays a wine card with details.
     rag_explanation_content is the pre-fetched RAG data for this card.
@@ -20,18 +20,17 @@ def display_wine_card(wine_data, card_key_prefix, is_base_wine=False, base_wine_
     
     wine_id_for_key = wine_data.get('pinecone_id', wine_data.get('name', str(time.time()))) 
     
-    # The container for individual cards.
-    # Base wine's "container" is the styled div created in main_app_layout.
-    # Recommendation cards get their own bordered container here.
-    
-    # Define a function to render the inner content, to be used by both base and rec cards
-    def render_inner_card_content():
+    # Recommendation cards get their own bordered container
+    # Base wine's "container" styling is handled in main_app_layout
+    card_container_context = st.container(border=True) if not is_base_wine else st.container()
+
+    with card_container_context: 
         col1, col2 = st.columns([1, 3]) 
 
         with col1:
             image_url = wine_data.get('image_url') 
             if image_url:
-                st.image(image_url, width=120) 
+                st.image(image_url, width=120) # Explicit width for consistent image sizing
             else:
                 st.caption("No image")
 
@@ -57,7 +56,7 @@ def display_wine_card(wine_data, card_key_prefix, is_base_wine=False, base_wine_
             
             for detail in details_to_display:
                 st.markdown(detail)
-            st.write("") 
+            st.write("") # Add a little space
 
             if is_base_wine and base_wine_summary_blurb:
                 st.markdown(f"**AI Somm on Your Pick:** _{base_wine_summary_blurb}_")
@@ -68,10 +67,8 @@ def display_wine_card(wine_data, card_key_prefix, is_base_wine=False, base_wine_
                 elif not rag_explanation_content: 
                     st.caption("⏳ AI Somm is tasting this wine... notes coming in a few seconds, stay tuned!")
 
-        # Detailed Comparison and other info sections
-        # These will be inside the card's main container (bordered for recs, styled div for base)
-        
-        # Detailed Comparison Expander (only for recommended wines)
+
+        # Detailed Comparison Expander (outside the columns, but inside the card container)
         if not is_base_wine and rag_explanation_content: 
             detailed_comparison_md = rag_explanation_content.get('detailed_comparison_markdown')
             if detailed_comparison_md:
@@ -89,17 +86,17 @@ def display_wine_card(wine_data, card_key_prefix, is_base_wine=False, base_wine_
                 if isinstance(loaded_reviews, list):
                     reviews = loaded_reviews
             except json.JSONDecodeError:
-                if not is_base_wine: # Only show warning on rec cards to avoid clutter on base
+                if not is_base_wine: 
                     st.warning("Could not parse tasting notes for display.")
 
         if description or reviews:
-            # For base wine, display directly (it's already in an expander)
-            # For rec wine, create an expander
-            if is_base_wine:
-                st.markdown("---") # Separator
+            expander_title = "📝 Tasting Notes, Description & Critic Reviews"
+            if is_base_wine: # For base wine, display directly as it's within a styled section
+                st.markdown("---") # Separator before description/reviews
                 if description:
                     st.markdown(f"**Product Description:**")
                     st.write(description)
+                    if reviews: st.markdown("---")
                 if reviews:
                     st.markdown(f"**Tasting Notes & Critic Reviews:**")
                     for review in reviews[:3]: 
@@ -109,7 +106,7 @@ def display_wine_card(wine_data, card_key_prefix, is_base_wine=False, base_wine_
                             if rating is not None: review_md += f" (Rating: {rating})"
                             review_md += f": {review_text}"; st.markdown(review_md)
             else: # For recommendation cards, use an expander
-                with st.expander("📝 Tasting Notes, Description & Critic Reviews"):
+                with st.expander(expander_title):
                     if description:
                         st.markdown(f"**Product Description:**\n{description}")
                         if reviews: 
@@ -121,16 +118,7 @@ def display_wine_card(wine_data, card_key_prefix, is_base_wine=False, base_wine_
                                 review_md = f"**{author}**"; 
                                 if rating is not None: review_md += f" (Rating: {rating})"
                                 review_md += f": {review_text}"; st.markdown(review_md)
-        st.write("") # Adds a bit of vertical space at the end of card content
-
-    # Determine how to wrap the card content
-    if is_base_wine:
-        # Base wine content is rendered directly, its "container" is the styled div in main_app_layout
-        render_inner_card_content()
-    else:
-        # Recommendation cards get their own bordered container
-        with st.container(border=True):
-            render_inner_card_content()
+        st.write("") 
 
 
 #######################################
@@ -153,6 +141,7 @@ def main_app_layout():
     if 'fetch_rag_next_idx' not in st.session_state: st.session_state.fetch_rag_next_idx = 0
     if 'new_search_triggered' not in st.session_state: st.session_state.new_search_triggered = False
     if 'initial_load_complete' not in st.session_state: st.session_state.initial_load_complete = False
+    if 'base_blurb_fetched' not in st.session_state: st.session_state.base_blurb_fetched = False
 
 
     wine_names_list = wine_recommendation.get_all_wine_names() 
@@ -179,20 +168,20 @@ def main_app_layout():
         st.session_state.new_search_triggered = True 
         st.session_state.base_wine_for_display = None
         st.session_state.recommendations_list = []
-        st.session_state.base_blurb_for_display = None
+        st.session_state.base_blurb_for_display = None 
         st.session_state.rag_explanations = {} 
         st.session_state.fetch_rag_next_idx = 0
         st.session_state.initial_load_complete = False 
+        st.session_state.base_blurb_fetched = False 
 
         with st.spinner(f"Finding wines similar to '{user_selected_wine_name}'... 🥂"):
-            base_details, rec_list_meta_only, base_blurb = wine_recommendation.recommend_wines_for_streamlit(
+            base_details, rec_list_meta_only, _ = wine_recommendation.recommend_wines_for_streamlit(
                 user_wine_name_input=user_selected_wine_name, top_k=5, 
                 price_min=price_min_filter, price_max=price_max_filter,
                 min_confidence_score=wine_recommendation.DEFAULT_CONFIDENCE_SCORE 
             )
         st.session_state.base_wine_for_display = base_details
         st.session_state.recommendations_list = rec_list_meta_only 
-        st.session_state.base_blurb_for_display = base_blurb
         st.session_state.initial_load_complete = True 
         print(f"DEBUG: Initial fetch complete. Base wine: {base_details.get('name') if base_details else 'None'}. Recs count: {len(rec_list_meta_only)}")
         st.rerun() 
@@ -200,8 +189,6 @@ def main_app_layout():
 
     if st.session_state.base_wine_for_display:
         st.markdown("## 🍷 Your Selected Wine") 
-        # The base wine card is now rendered within this styled div block
-        # The display_wine_card function for base_wine will not create its own st.container(border=True)
         st.markdown(
             """
             <style>
@@ -210,7 +197,7 @@ def main_app_layout():
                 padding: 1rem;              
                 border-radius: 0.5rem;      
                 margin-bottom: 1rem;        
-                border: 1px solid #e0e0e0; /* Adding a border to the grey box */
+                border: 1px solid #e0e0e0; 
             }
             </style>
             <div class="base-wine-section-wrapper">
@@ -243,7 +230,7 @@ def main_app_layout():
                             rec_wine_meta, 
                             card_key_prefix=f"rec_{i}", 
                             is_base_wine=False,
-                            base_wine_for_comparison=st.session_state.base_wine_for_display,
+                            # base_wine_for_comparison removed from this call
                             rag_explanation_content=rag_content_for_card 
                         )
         elif st.session_state.initial_load_complete and not st.session_state.recommendations_list: 
@@ -251,9 +238,16 @@ def main_app_layout():
                 st.info(f"I found '{st.session_state.base_wine_for_display.get('name', 'your chosen wine')}', but couldn't find other similar wines matching all your filter criteria. Perhaps try adjusting the price range?")
 
     if st.session_state.initial_load_complete and st.session_state.recommendations_list and st.session_state.base_wine_for_display:
-        idx_to_fetch = st.session_state.get('fetch_rag_next_idx', 0) 
+        if not st.session_state.base_blurb_fetched : # Fetch base blurb first if not done
+            with st.spinner(f"Getting AI Somm's take on {st.session_state.base_wine_for_display.get('name', 'your wine')}..."):
+                print(f"DEBUG: Fetching blurb for base wine: {st.session_state.base_wine_for_display.get('name')}")
+                st.session_state.base_blurb_for_display = wine_recommendation.generate_base_wine_blurb(st.session_state.base_wine_for_display)
+                st.session_state.base_blurb_fetched = True
+                st.rerun()
 
-        if idx_to_fetch < len(st.session_state.recommendations_list):
+
+        idx_to_fetch = st.session_state.get('fetch_rag_next_idx', 0) 
+        if st.session_state.base_blurb_fetched and idx_to_fetch < len(st.session_state.recommendations_list): # Ensure base blurb is fetched before rec RAGs
             wine_to_explain = st.session_state.recommendations_list[idx_to_fetch]
             wine_pinecone_id_to_fetch = wine_to_explain.get('pinecone_id') 
 

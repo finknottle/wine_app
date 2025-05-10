@@ -70,8 +70,8 @@ except Exception as e:
     if not IS_LOCAL_TEST: st.error(error_message); st.stop()
 
 DEFAULT_CONFIDENCE_SCORE = 75 
-MAX_SAME_PRODUCER_RECS = 1 # Max from the *same producer as the base wine*
-MAX_WINES_FROM_ANY_SINGLE_PRODUCER = 2 # Max from *any single producer* in the final list
+MAX_SAME_PRODUCER_RECS = 1 
+MAX_WINES_FROM_ANY_SINGLE_PRODUCER = 2 
 
 @st.cache_data(ttl=3600) 
 def get_all_wine_names():
@@ -274,6 +274,46 @@ DETAILED_COMPARISON_MARKDOWN: [Your Markdown for the detailed comparison startin
     except Exception as e: print(f"⚠️ {time.strftime('%Y-%m-%d %H:%M:%S')} - RAG Expl. failed: {e}")
     return explanation_dict
 
+# Function to generate only the base wine blurb (to reduce initial load time)
+def generate_base_wine_blurb(base_wine_metadata):
+    if not base_wine_metadata: return "Could not determine details for your selected wine."
+    
+    base_name = get_field(base_wine_metadata, "name", "The Selected Wine")
+    base_brand_for_prompt = get_field(base_wine_metadata, "brand")
+    if base_brand_for_prompt == "N/A" or not base_brand_for_prompt : 
+        base_brand_for_prompt = extract_brand_from_name_heuristic(base_wine_metadata.get("name", ""))
+        if not base_brand_for_prompt: base_brand_for_prompt = "N/A" 
+
+    base_info_for_prompt = (
+        f"Category: {get_field(base_wine_metadata, 'category')}, "
+        f"Origin: {get_field(base_wine_metadata, 'country_of_origin')}, "
+        f"Producer: {base_brand_for_prompt}, "
+        f"Description: {get_field(base_wine_metadata, 'description', 'No description.')[:200]}..., " # Shorter desc for blurb
+        f"Reviews: {get_review_snippets_for_prompt(base_wine_metadata.get('reviews_json', '[]'), num_snippets=1)}" # Fewer snippets for blurb
+    )
+    
+    blurb_prompt = f"""
+Based on the following details for the wine "{base_name}":
+{base_info_for_prompt}
+
+In 1-2 concise sentences, summarize what someone likely enjoys about this wine. Focus on its key positive attributes. Start with "You seem to enjoy wines that...".
+Example: "You seem to enjoy wines that are full-bodied and fruit-forward, with hints of oak and a smooth finish."
+"""
+    default_blurb = f"You likely enjoy {base_name} for its general characteristics and profile." 
+    try:
+        # print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Generating base wine blurb for: {base_name}") # Verbose
+        response = client.chat.completions.create(
+            model="gpt-4o-mini", messages=[{"role": "user", "content": blurb_prompt}],
+            temperature=0.5, max_tokens=100
+        )
+        blurb_text = response.choices[0].message.content.strip()
+        # print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Base wine blurb generated: {blurb_text}") # Verbose
+        return blurb_text if blurb_text else default_blurb
+    except Exception as e:
+        print(f"⚠️ {time.strftime('%Y-%m-%d %H:%M:%S')} - Failed to generate base wine blurb: {e}")
+        return default_blurb
+
+
 def search_similar_wines(base_wine_metadata, top_k=5, price_min=0.0, price_max=999999.0, 
                          max_same_producer_as_base=MAX_SAME_PRODUCER_RECS, 
                          max_per_any_producer=MAX_WINES_FROM_ANY_SINGLE_PRODUCER): 
@@ -289,7 +329,7 @@ def search_similar_wines(base_wine_metadata, top_k=5, price_min=0.0, price_max=9
     if price_filters: pinecone_filter["$and"] = price_filters
     if pinecone_filter: print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Pinecone filter: {pinecone_filter}")
     else: print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - No price filter.")
-    query_result = None; num_candidates_to_fetch = top_k * 10 # Fetch more for diversity
+    query_result = None; num_candidates_to_fetch = top_k * 10 
     try:
         print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Querying Pinecone for {num_candidates_to_fetch} candidates...")
         query_result = index.query(vector=query_vector, filter=pinecone_filter if pinecone_filter else None, top_k=num_candidates_to_fetch, include_metadata=True)
@@ -305,9 +345,7 @@ def search_similar_wines(base_wine_metadata, top_k=5, price_min=0.0, price_max=9
     elif base_producer_for_diversity: base_producer_for_diversity = base_producer_for_diversity.lower()
     else: base_producer_for_diversity = "" 
 
-    processed_ids = set(); 
-    same_producer_as_base_count = 0
-    producer_counts_in_recs = {} # Tracks counts for ANY producer in the final list
+    processed_ids = set(); same_producer_as_base_count = 0; producer_counts_in_recs = {}
 
     print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Processing {len(query_result['matches'])} candidates for diversity (top_k={top_k}, max_same_as_base={max_same_producer_as_base}, max_per_any={max_per_any_producer})...")
     print(f"--- [{time.strftime('%Y-%m-%d %H:%M:%S')}] Base Wine For Diversity: Name='{base_wine_metadata.get('name')}', Effective Producer='{base_producer_for_diversity}' ---")
@@ -318,7 +356,6 @@ def search_similar_wines(base_wine_metadata, top_k=5, price_min=0.0, price_max=9
         
         metadata = match["metadata"]; score = match.get("score", 0.0); pinecone_vector_id = match.get("id")
         current_wine_name = metadata.get("name", ""); current_wine_name_lower = current_wine_name.lower()
-        
         candidate_brand_from_meta = metadata.get("brand")
         candidate_producer_for_diversity = extract_brand_from_name_heuristic(current_wine_name) 
         if candidate_brand_from_meta and isinstance(candidate_brand_from_meta, str) and candidate_brand_from_meta.strip() and candidate_brand_from_meta != "N/A":
@@ -335,34 +372,32 @@ def search_similar_wines(base_wine_metadata, top_k=5, price_min=0.0, price_max=9
         is_same_as_base_producer = False
         if base_producer_for_diversity and candidate_producer_for_diversity and base_producer_for_diversity == candidate_producer_for_diversity:
             is_same_as_base_producer = True
+            print(f"    Identified as SAME producer as base by direct brand/heuristic match: '{base_producer_for_diversity}'")
         if not is_same_as_base_producer and base_producer_for_diversity and len(base_producer_for_diversity) > 2 and base_producer_for_diversity in current_wine_name_lower:
             is_same_as_base_producer = True
-            print(f"    Treated as same producer as base by NAME MATCH: base_producer '{base_producer_for_diversity}' in candidate_name '{current_wine_name_lower}'.")
+            print(f"    Identified as SAME producer as base by NAME MATCH: base_producer '{base_producer_for_diversity}' in candidate_name '{current_wine_name_lower}'.")
         
         if is_same_as_base_producer:
             if same_producer_as_base_count >= max_same_producer_as_base:
-                print(f"    SKIPPED (Same Producer as Base Limit): '{current_wine_name}'. Limit {max_same_producer_as_base} reached.")
+                print(f"    SKIPPED (Same Producer as Base Limit): '{current_wine_name}'. Limit {max_same_producer_as_base} reached for base's producer.")
                 continue
-            else:
-                # This wine is from the same producer as base, and we haven't hit that specific limit yet.
-                # Now, also check the general limit for this producer in the recommendation list.
-                if candidate_producer_for_diversity and \
-                   producer_counts_in_recs.get(candidate_producer_for_diversity, 0) >= max_per_any_producer:
-                    print(f"    SKIPPED (General Producer Limit): '{current_wine_name}' from producer '{candidate_producer_for_diversity}'. General limit {max_per_any_producer} reached for this producer in recommendations.")
-                    continue
-                same_producer_as_base_count += 1
-                if candidate_producer_for_diversity:
-                    producer_counts_in_recs[candidate_producer_for_diversity] = producer_counts_in_recs.get(candidate_producer_for_diversity, 0) + 1
-                print(f"    ACCEPTED (Same Producer as Base): '{current_wine_name}'. Count for base producer: {same_producer_as_base_count}/{max_same_producer_as_base}. Count for this producer in recs: {producer_counts_in_recs.get(candidate_producer_for_diversity, 0)}/{max_per_any_producer}")
+            # This wine is from the same producer as base, and we haven't hit that specific limit yet.
+            # Now, also check the general limit for this producer in the recommendation list.
+            if candidate_producer_for_diversity and producer_counts_in_recs.get(candidate_producer_for_diversity, 0) >= max_per_any_producer:
+                print(f"    SKIPPED (General Producer Limit for a same-as-base producer): '{current_wine_name}' from producer '{candidate_producer_for_diversity}'. General limit {max_per_any_producer} reached for this producer in recommendations.")
+                continue
+            same_producer_as_base_count += 1
+            if candidate_producer_for_diversity: # Increment general count only if producer is identified
+                producer_counts_in_recs[candidate_producer_for_diversity] = producer_counts_in_recs.get(candidate_producer_for_diversity, 0) + 1
+            print(f"    ACCEPTED (Same Producer as Base): '{current_wine_name}'. Base producer count: {same_producer_as_base_count}/{max_same_producer_as_base}. This producer in recs: {producer_counts_in_recs.get(candidate_producer_for_diversity, 0)}/{max_per_any_producer}")
         else: # Different producer than base wine
-            if candidate_producer_for_diversity and \
-               producer_counts_in_recs.get(candidate_producer_for_diversity, 0) >= max_per_any_producer:
-                print(f"    SKIPPED (General Producer Limit): '{current_wine_name}' from producer '{candidate_producer_for_diversity}'. General limit {max_per_any_producer} reached for this producer in recommendations.")
+            if candidate_producer_for_diversity and producer_counts_in_recs.get(candidate_producer_for_diversity, 0) >= max_per_any_producer:
+                print(f"    SKIPPED (General Producer Limit): '{current_wine_name}' from producer '{candidate_producer_for_diversity}'. General limit {max_per_any_producer} reached.")
                 continue
             else:
-                if candidate_producer_for_diversity:
+                if candidate_producer_for_diversity: # Increment general count only if producer is identified
                     producer_counts_in_recs[candidate_producer_for_diversity] = producer_counts_in_recs.get(candidate_producer_for_diversity, 0) + 1
-                print(f"    ACCEPTED (Different Producer): '{current_wine_name}'. Count for this producer in recs: {producer_counts_in_recs.get(candidate_producer_for_diversity, 0)}/{max_per_any_producer}")
+                print(f"    ACCEPTED (Different Producer): '{current_wine_name}'. This producer in recs: {producer_counts_in_recs.get(candidate_producer_for_diversity,0)}/{max_per_any_producer}")
 
         metadata["pinecone_id"] = pinecone_vector_id
         metadata["similarity_score"] = score 
@@ -372,43 +407,39 @@ def search_similar_wines(base_wine_metadata, top_k=5, price_min=0.0, price_max=9
     print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Finished. Returning {len(final_recommendations)} recommendations.")
     return final_recommendations
     
+# --------------------------
+# 5️⃣ Main Recommendation Function
+# --------------------------
 def recommend_wines_for_streamlit(user_wine_name_input, top_k=5, price_min=0.0, price_max=999999.0, min_confidence_score=DEFAULT_CONFIDENCE_SCORE):
     print(f"\n🍇 {time.strftime('%Y-%m-%d %H:%M:%S')} - Starting recommendation for: '{user_wine_name_input}'")
     base_wine_metadata = find_wine_by_name(user_wine_name_input, min_confidence_score)
     if not base_wine_metadata:
-        st.warning(f"Sorry, couldn't find a close match for '{user_wine_name_input}'. Try a different name or check spelling.")
-        return None, [], None 
+        # st.warning is handled by app.py now if base_wine_metadata is None
+        return None, [], None # Return None for base_wine, empty list for recs, None for blurb
+    
     print(f"✅ {time.strftime('%Y-%m-%d %H:%M:%S')} - Base wine identified: '{base_wine_metadata.get('name')}' (Pinecone ID: {base_wine_metadata.get('pinecone_id')})")
-    base_brand_for_prompt = get_field(base_wine_metadata, "brand")
-    if base_brand_for_prompt == "N/A" or not base_brand_for_prompt : 
-        base_brand_for_prompt = extract_brand_from_name_heuristic(base_wine_metadata.get("name", ""))
-        if not base_brand_for_prompt: base_brand_for_prompt = "N/A" 
-    base_wine_blurb_prompt = f"""
-Based on the following details for the wine "{get_field(base_wine_metadata, 'name', 'Unknown')}":
-- Category: {get_field(base_wine_metadata, 'category')}
-- Origin: {get_field(base_wine_metadata, 'country_of_origin')}
-- Producer: {base_brand_for_prompt}
-- Description: {get_field(base_wine_metadata, 'description', 'No description.')[:300]}...
-- Reviews: {get_review_snippets_for_prompt(base_wine_metadata.get('reviews_json', '[]'))}
-In 1-2 sentences, summarize what someone likely enjoys about this wine. Focus on positive attributes inferable from the provided details. Start with "You seem to enjoy wines that...".
-"""
-    base_wine_blurb = f"You likely enjoy {get_field(base_wine_metadata, 'name', 'this wine')} for its general characteristics and profile." 
-    try:
-        response = client.chat.completions.create(model="gpt-4o-mini", messages=[{"role": "user", "content": base_wine_blurb_prompt}], temperature=0.5, max_tokens=100)
-        blurb_text = response.choices[0].message.content.strip()
-        if blurb_text: base_wine_blurb = blurb_text
-    except Exception as e: print(f"⚠️ {time.strftime('%Y-%m-%d %H:%M:%S')} - Failed to generate base wine blurb: {e}")
-    recommendations = search_similar_wines(base_wine_metadata, top_k=top_k, price_min=price_min, price_max=price_max) # MAX_WINES_FROM_ANY_SINGLE_PRODUCER is used by default
-    return base_wine_metadata, recommendations, base_wine_blurb 
+    
+    # Base wine blurb generation is now deferred to app.py to speed up initial recommendations.
+    # We will return None for base_wine_blurb here. App.py will fetch it.
+    
+    recommendations = search_similar_wines(base_wine_metadata, top_k=top_k, price_min=price_min, price_max=price_max)
+    return base_wine_metadata, recommendations, None # Return None for base_wine_blurb
 
 def _run_standalone_recommender_ui(): 
     st.set_page_config(page_title="🍷 Wine Recommender AI (Module Test)", layout="wide")
     st.title("🍇 AI Wine Recommender (Module Test)")
     with st.sidebar: st.header("Search Filters"); user_input_wine = st.text_input("Enter a wine name:", placeholder="e.g., Opus One"); price_range_val = st.slider("Price ($):", 0.0, 1000.0, (0.0, 500.0), 10.0)
     if user_input_wine and st.button("✨ Test Find Recommendations"):
-        with st.spinner("Searching..."): base_meta, rec_list, base_blurb = recommend_wines_for_streamlit(user_input_wine, top_k=5, price_min=price_range_val[0], price_max=price_range_val[1], min_confidence_score=75)
+        with st.spinner("Searching..."): 
+            # For standalone test, we'll fetch base blurb here for simplicity
+            base_meta, rec_list, _ = recommend_wines_for_streamlit(user_input_wine, top_k=5, price_min=price_range_val[0], price_max=price_range_val[1], min_confidence_score=75)
+            test_base_blurb = "Test: Base blurb would be generated on demand in main app."
+            if base_meta:
+                test_base_blurb = generate_base_wine_blurb(base_meta)
+
+
         if base_meta:
-            st.subheader(f"Base Wine: {base_meta.get('name', 'N/A')}"); st.markdown(f"**What you might like:** {base_blurb}"); st.json(base_meta) 
+            st.subheader(f"Base Wine: {base_meta.get('name', 'N/A')}"); st.markdown(f"**What you might like:** {test_base_blurb}"); st.json(base_meta) 
             if rec_list:
                 st.subheader("Recommendations:")
                 for idx, rec in enumerate(rec_list):
