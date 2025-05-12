@@ -18,6 +18,8 @@ def display_wine_card(wine_data, card_key_prefix, is_base_wine=False, base_wine_
         st.warning("Wine details are missing or in an incorrect format.")
         return
     
+    # Use pinecone_id if available, otherwise fallback for base wine or older data structure
+    # This pinecone_id is now expected to be present from wine_recommendation.py
     wine_id_for_key = wine_data.get('pinecone_id', wine_data.get('name', str(time.time()))) 
     
     # Recommendation cards get their own bordered container
@@ -90,7 +92,7 @@ def display_wine_card(wine_data, card_key_prefix, is_base_wine=False, base_wine_
                     st.warning("Could not parse tasting notes for display.")
 
         if description or reviews:
-            expander_title = "📝 Tasting Notes, Description & Critic Reviews"
+            expander_title = "📝 Tasting Notes, Description & Critic Reviews" if not is_base_wine else "📖 Description & Reviews"
             if is_base_wine: # For base wine, display directly as it's within a styled section
                 st.markdown("---") # Separator before description/reviews
                 if description:
@@ -175,6 +177,7 @@ def main_app_layout():
         st.session_state.base_blurb_fetched = False 
 
         with st.spinner(f"Finding wines similar to '{user_selected_wine_name}'... 🥂"):
+            # recommend_wines_for_streamlit now returns base_blurb as None initially
             base_details, rec_list_meta_only, _ = wine_recommendation.recommend_wines_for_streamlit(
                 user_wine_name_input=user_selected_wine_name, top_k=5, 
                 price_min=price_min_filter, price_max=price_max_filter,
@@ -187,21 +190,23 @@ def main_app_layout():
         st.rerun() 
 
 
+    # --- Display Base Wine and Fetch its Blurb (if needed) ---
     if st.session_state.base_wine_for_display:
+        # Fetch base wine blurb if not already fetched for this search
+        if not st.session_state.base_blurb_fetched and st.session_state.initial_load_complete:
+            # No global spinner here, as this should be quick. 
+            # The main spinner was for the recommendation list fetch.
+            print(f"DEBUG: Fetching blurb for base wine: {st.session_state.base_wine_for_display.get('name')}")
+            st.session_state.base_blurb_for_display = wine_recommendation.generate_base_wine_blurb(st.session_state.base_wine_for_display)
+            st.session_state.base_blurb_fetched = True
+            # Rerun to display the fetched blurb before proceeding to rec RAGs
+            # This ensures base wine card is fully populated before recs start their RAG loading
+            print(f"DEBUG: Base blurb fetched. Rerunning to display.")
+            st.rerun() 
+
         st.markdown("## 🍷 Your Selected Wine") 
-        st.markdown(
-            """
-            <style>
-            .base-wine-section-wrapper { 
-                background-color: #f0f2f6; 
-                padding: 1rem;              
-                border-radius: 0.5rem;      
-                margin-bottom: 1rem;        
-                border: 1px solid #e0e0e0; 
-            }
-            </style>
-            <div class="base-wine-section-wrapper">
-            """, unsafe_allow_html=True
+        st.markdown( # Apply styled div for base wine section
+            """<div class="base-wine-section-wrapper">""", unsafe_allow_html=True
         )
         display_wine_card(
             st.session_state.base_wine_for_display, 
@@ -209,9 +214,10 @@ def main_app_layout():
             is_base_wine=True, 
             base_wine_summary_blurb=st.session_state.base_blurb_for_display
         )
-        st.markdown("</div>", unsafe_allow_html=True) 
+        st.markdown("</div>", unsafe_allow_html=True) # Close the styled div for base wine
         st.markdown("---") 
 
+        # --- Display Recommendations and Fetch RAG ---
         if st.session_state.recommendations_list:
             st.markdown("## ✨ AI Somm Recommends...") 
             
@@ -230,30 +236,28 @@ def main_app_layout():
                             rec_wine_meta, 
                             card_key_prefix=f"rec_{i}", 
                             is_base_wine=False,
-                            # base_wine_for_comparison removed from this call
                             rag_explanation_content=rag_content_for_card 
                         )
+        
         elif st.session_state.initial_load_complete and not st.session_state.recommendations_list: 
              if st.session_state.base_wine_for_display: 
                 st.info(f"I found '{st.session_state.base_wine_for_display.get('name', 'your chosen wine')}', but couldn't find other similar wines matching all your filter criteria. Perhaps try adjusting the price range?")
 
-    if st.session_state.initial_load_complete and st.session_state.recommendations_list and st.session_state.base_wine_for_display:
-        if not st.session_state.base_blurb_fetched : # Fetch base blurb first if not done
-            with st.spinner(f"Getting AI Somm's take on {st.session_state.base_wine_for_display.get('name', 'your wine')}..."):
-                print(f"DEBUG: Fetching blurb for base wine: {st.session_state.base_wine_for_display.get('name')}")
-                st.session_state.base_blurb_for_display = wine_recommendation.generate_base_wine_blurb(st.session_state.base_wine_for_display)
-                st.session_state.base_blurb_fetched = True
-                st.rerun()
-
-
+    # --- Progressive RAG data fetching LOGIC (runs after display attempts) ---
+    # Fetch RAG only if base blurb has been fetched and initial recs are loaded
+    if st.session_state.initial_load_complete and st.session_state.base_blurb_fetched and \
+       st.session_state.recommendations_list and st.session_state.base_wine_for_display:
+        
         idx_to_fetch = st.session_state.get('fetch_rag_next_idx', 0) 
-        if st.session_state.base_blurb_fetched and idx_to_fetch < len(st.session_state.recommendations_list): # Ensure base blurb is fetched before rec RAGs
+
+        if idx_to_fetch < len(st.session_state.recommendations_list):
             wine_to_explain = st.session_state.recommendations_list[idx_to_fetch]
             wine_pinecone_id_to_fetch = wine_to_explain.get('pinecone_id') 
 
             if wine_pinecone_id_to_fetch and wine_pinecone_id_to_fetch not in st.session_state.rag_explanations:
                 print(f"Progressive RAG (app.py): >>> ATTEMPTING TO FETCH RAG for Pinecone ID: {wine_pinecone_id_to_fetch}, Name: {wine_to_explain.get('name')}, Index: {idx_to_fetch} <<<")
                 
+                # No global spinner here, individual cards show "pending..."
                 rag_data = wine_recommendation.generate_enhanced_rag_explanation(
                     st.session_state.base_wine_for_display, 
                     wine_to_explain
