@@ -20,14 +20,17 @@ def display_wine_card(wine_data, card_key_prefix, is_base_wine=False, base_wine_
     
     wine_id_for_key = wine_data.get('pinecone_id', wine_data.get('name', str(time.time()))) 
     
-    # All cards will now use st.container(border=True)
+    # All cards use a bordered container for a consistent look
+    # The content of the card will be placed here.
+    # For horizontal scrolling, the card itself should not force full width.
+    
     with st.container(border=True): 
-        col1, col2 = st.columns([1, 3]) 
+        col1, col2 = st.columns([1, 3]) # Image column, Text column
 
         with col1:
             image_url = wine_data.get('image_url') 
             if image_url:
-                st.image(image_url, width=120) 
+                st.image(image_url, width=100) # Slightly smaller image
             else:
                 st.caption("No image")
 
@@ -40,33 +43,35 @@ def display_wine_card(wine_data, card_key_prefix, is_base_wine=False, base_wine_
             
             details_to_display = []
             if wine_data.get('brand'): details_to_display.append(f"**🍷 Producer:** {wine_data.get('brand')}")
-            # Category and Origin are commented out as per previous request
-            # if wine_data.get('category'): details_to_display.append(f"**🍇 Category:** {wine_data.get('category')}")
-            # if wine_data.get('country_of_origin'): details_to_display.append(f"**🌍 Origin:** {wine_data.get('country_of_origin')}")
-            if wine_data.get('price') is not None:
+            if wine_data.get('price') is not None: # Price is important
                 details_to_display.append(f"**💲 Price:** ${wine_data.get('price'):.2f}")
-            if wine_data.get('size'): details_to_display.append(f"**🍾 Size:** {wine_data.get('size')}") 
-            if wine_data.get('avg_rating') is not None:
+            if wine_data.get('avg_rating') is not None: # Rating is important
                 rating_text = f"{wine_data.get('avg_rating'):.1f}"
                 if wine_data.get('best_rating_scale') is not None: rating_text += f" / {wine_data.get('best_rating_scale'):.0f}"
                 if wine_data.get('num_reviews') is not None: rating_text += f" ({wine_data.get('num_reviews')} reviews)"
                 details_to_display.append(f"**🌟 Avg. Rating:** {rating_text}")
             
+            # Less prominent details, can be shorter or in expander if needed
+            # For now, keep them, but be mindful of card height
+            if wine_data.get('category'): details_to_display.append(f"**🍇 Category:** {wine_data.get('category')}")
+            if wine_data.get('country_of_origin'): details_to_display.append(f"**🌍 Origin:** {wine_data.get('country_of_origin')}")
+            if wine_data.get('size'): details_to_display.append(f"**🍾 Size:** {wine_data.get('size')}") 
+            
             for detail in details_to_display:
-                st.markdown(detail)
-            st.write("") 
+                st.markdown(f"<div style='font-size: 0.9rem; margin-bottom: 0.1rem;'>{detail}</div>", unsafe_allow_html=True)
+            # st.write("") # Removed to reduce vertical space
 
             if is_base_wine and base_wine_summary_blurb:
-                st.markdown(f"**AI Somm on Your Pick:** _{base_wine_summary_blurb}_")
+                st.markdown(f"<div style='font-size: 0.95rem; margin-top: 0.5rem;'>**AI Somm on Your Pick:** _{base_wine_summary_blurb}_</div>", unsafe_allow_html=True)
             
             if not is_base_wine: 
                 if rag_explanation_content and rag_explanation_content.get('recommended_wine_blurb'):
-                    st.markdown(f"**Why You Might Like This:** _{rag_explanation_content.get('recommended_wine_blurb')}_")
+                    st.markdown(f"<div style='font-size: 0.95rem; margin-top: 0.5rem;'>**Why You'll Love This Wine:** _{rag_explanation_content.get('recommended_wine_blurb')}_</div>", unsafe_allow_html=True)
                 elif not rag_explanation_content: 
                     st.caption("⏳ AI Somm is tasting this wine... notes coming in a few seconds, stay tuned!")
 
 
-        # Detailed Comparison Expander (outside the columns, but inside the card container)
+        # Detailed Comparison Expander (for recommended wines)
         if not is_base_wine and rag_explanation_content: 
             detailed_comparison_md = rag_explanation_content.get('detailed_comparison_markdown')
             if detailed_comparison_md:
@@ -74,7 +79,7 @@ def display_wine_card(wine_data, card_key_prefix, is_base_wine=False, base_wine_
                 with st.expander("💡 AI Somm's Detailed Comparison", expanded=False): 
                     st.markdown(detailed_comparison_md, unsafe_allow_html=True)
         
-        # Combined Description and Reviews, now always in an expander, collapsed by default
+        # Combined Description and Reviews, always in an expander, collapsed by default for ALL cards
         description = wine_data.get('description', '') 
         reviews_json_str = wine_data.get('reviews_json', '[]')
         reviews = []
@@ -84,11 +89,11 @@ def display_wine_card(wine_data, card_key_prefix, is_base_wine=False, base_wine_
                 if isinstance(loaded_reviews, list):
                     reviews = loaded_reviews
             except json.JSONDecodeError:
-                st.warning("Could not parse tasting notes for display.") # Show warning for any card
+                st.warning("Could not parse tasting notes for display.")
 
         if description or reviews:
             expander_title = "📝 Description, Tasting Notes & Critic Reviews"
-            with st.expander(expander_title, expanded=False): # Always collapsed by default
+            with st.expander(expander_title, expanded=False): 
                 if description:
                     st.markdown(f"**Product Description:**\n{description}")
                     if reviews: 
@@ -104,22 +109,21 @@ def display_wine_card(wine_data, card_key_prefix, is_base_wine=False, base_wine_
                             review_md = f"**{author}**"; 
                             if rating is not None: review_md += f" (Rating: {rating})"
                             review_md += f": {review_text}"; st.markdown(review_md)
-        st.write("") 
-
+        # st.write("") # Removed to reduce vertical space
 
 #######################################
 # Main Streamlit App Layout
 #######################################
 def main_app_layout():
-    st.title("🍇 AI Somm: Your Personal Wine Guide") 
+    st.title("🍇 AI Somm") 
+    st.markdown("### Let us help you find your next favorite wine!") 
     st.markdown("""
-    Ready to uncork your next favorite wine? 🍾
-    
-    Tell me a wine you already love, and I'll use a dash of AI magic to suggest others that might tantalize your tastebuds. 
-    Adjust the price filter in the sidebar to match your budget. Let the discovery begin!
+    Tell AI Somm a wine you already love, and our AI will suggest others that might tantalize your tastebuds. 
+    Adjust the price filter in the sidebar to match your budget. Let the discovery begin! 🍾
     """)
     st.markdown("---")
 
+    # Session state initialization
     if 'base_wine_for_display' not in st.session_state: st.session_state.base_wine_for_display = None
     if 'base_blurb_for_display' not in st.session_state: st.session_state.base_blurb_for_display = None
     if 'recommendations_list' not in st.session_state: st.session_state.recommendations_list = [] 
@@ -129,21 +133,23 @@ def main_app_layout():
     if 'initial_load_complete' not in st.session_state: st.session_state.initial_load_complete = False
     if 'base_blurb_fetched' not in st.session_state: st.session_state.base_blurb_fetched = False
 
-
     wine_names_list = wine_recommendation.get_all_wine_names() 
     
-    col_select_main, _ = st.columns([2,1]) 
-    with col_select_main:
-        if not wine_names_list:
-            st.info("Loading wine names... If this is the first run or after a cache refresh, it might take a moment. If no names appear, ensure `get_all_wine_names` in `wine_recommendation.py` is correctly implemented.")
-            user_selected_wine_name = st.text_input("Enter a wine name you like (autocomplete list unavailable):", placeholder="e.g., Caymus Cabernet Sauvignon", key="wine_text_input_fallback")
-        else:
-            user_selected_wine_name = st.selectbox("Select or type a wine you enjoy:", options=[""] + wine_names_list, index=0, help="Start typing to search, or select from the list.", key="wine_selectbox")
+    user_selected_wine_name = st.selectbox(
+        "Tell us a wine you like...", 
+        options=[""] + wine_names_list,  
+        index=0, 
+        help="Start typing to search, or select from the list.",
+        key="wine_selectbox_main"
+    )
 
     with st.sidebar:
-        st.header("💰 Your Price Filter")
+        st.header("💰 Price Filter")
         min_catalog_price = 0.0; max_slider_price = 200.0 
-        price_range = st.slider("Preferred price range ($):", min_value=min_catalog_price, max_value=max_slider_price, value=(min_catalog_price, 100.0), step=5.0, format="$%.0f", key="price_slider")
+        price_range = st.slider("Preferred price range ($):", 
+                                min_value=min_catalog_price, max_value=max_slider_price, 
+                                value=(min_catalog_price, 100.0), step=5.0, format="$%.0f", 
+                                key="price_slider")
         price_min_filter, price_max_filter = price_range
 
     submit_button = st.button("✨ Find My Wine Matches!", type="primary", use_container_width=True)
@@ -172,9 +178,7 @@ def main_app_layout():
         print(f"DEBUG: Initial fetch complete. Base wine: {base_details.get('name') if base_details else 'None'}. Recs count: {len(rec_list_meta_only)}")
         st.rerun() 
 
-
     if st.session_state.base_wine_for_display:
-        # Fetch base wine blurb if not already fetched for this search
         if not st.session_state.base_blurb_fetched and st.session_state.initial_load_complete:
             print(f"DEBUG: Fetching blurb for base wine: {st.session_state.base_wine_for_display.get('name')}")
             st.session_state.base_blurb_for_display = wine_recommendation.generate_base_wine_blurb(st.session_state.base_wine_for_display)
@@ -182,8 +186,7 @@ def main_app_layout():
             print(f"DEBUG: Base blurb fetched. Rerunning to display.")
             st.rerun() 
 
-        st.markdown("## 🍷 Your Selected Wine") 
-        # Base wine card is now also using st.container(border=True) via display_wine_card
+        st.markdown("## 🍷 Your Wine Selection") 
         display_wine_card(
             st.session_state.base_wine_for_display, 
             card_key_prefix="base", 
@@ -193,54 +196,87 @@ def main_app_layout():
         st.markdown("---") 
 
         if st.session_state.recommendations_list:
-            st.markdown("## ✨ AI Somm Recommends...") 
+            st.markdown("## ✨ AI Somm's Picks") 
             
-            recommendations_to_show = st.session_state.recommendations_list
-            num_recs_to_show = len(recommendations_to_show)
-            cols_to_display = min(num_recs_to_show, 3) if num_recs_to_show > 0 else 1 
-            
-            if num_recs_to_show > 0 :
-                cols = st.columns(cols_to_display)
-                for i, rec_wine_meta in enumerate(recommendations_to_show):
-                    wine_pinecone_id = rec_wine_meta.get('pinecone_id') 
-                    rag_content_for_card = st.session_state.rag_explanations.get(wine_pinecone_id)
-                    
-                    with cols[i % cols_to_display]: 
-                        display_wine_card(
-                            rec_wine_meta, 
-                            card_key_prefix=f"rec_{i}", 
-                            is_base_wine=False,
-                            rag_explanation_content=rag_content_for_card 
-                        )
+            # --- Horizontal Scroll for Recommendations ---
+            # Inject CSS for horizontal scrolling flex container
+            # The key is that the items inside this container should not force full width.
+            # display_wine_card now uses st.container(border=True) which should behave well.
+            st.markdown("""
+                <style>
+                div.stButton > button {
+                    width: 100%;
+                }
+                .horizontal-scroll-container {
+                    display: flex;
+                    overflow-x: auto; /* Enables horizontal scrolling */
+                    overflow-y: hidden; /* Hides vertical scrollbar on the container itself */
+                    padding: 10px 0px 10px 0px; /* Add some padding */
+                    gap: 1rem; /* Space between cards */
+                    width: 100%; /* Ensure the container takes full width */
+                }
+                .scrollable-card {
+                    min-width: 320px; /* Minimum width of each card */
+                    max-width: 360px; /* Maximum width of each card */
+                    flex: 0 0 auto;   /* Prevents cards from shrinking/growing, maintains their width */
+                    /* border: 1px solid #e0e0e0; /* Moved border to st.container in display_wine_card */
+                    /* border-radius: 0.5rem; */
+                    /* padding: 1rem; */ /* Padding is handled by st.container now */
+                    /* background-color: #ffffff; */ /* Background is handled by st.container */
+                    /* margin-bottom: 10px; */ /* Redundant due to gap */
+                }
+                /* Hide scrollbar for Chrome, Safari and Opera */
+                .horizontal-scroll-container::-webkit-scrollbar {
+                    display: none;
+                }
+                /* Hide scrollbar for IE, Edge and Firefox */
+                .horizontal-scroll-container {
+                    -ms-overflow-style: none;  /* IE and Edge */
+                    scrollbar-width: none;  /* Firefox */
+                }
+                </style>
+            """, unsafe_allow_html=True)
+
+            # Create the flex container
+            st.markdown('<div class="horizontal-scroll-container">', unsafe_allow_html=True)
+            for i, rec_wine_meta in enumerate(st.session_state.recommendations_list):
+                wine_pinecone_id = rec_wine_meta.get('pinecone_id') 
+                rag_content_for_card = st.session_state.rag_explanations.get(wine_pinecone_id)
+                
+                # Each card is an item in the flex container
+                # We use st.markdown to inject the div for each card, then call display_wine_card
+                # The display_wine_card will create its own bordered st.container inside this div
+                st.markdown('<div class="scrollable-card">', unsafe_allow_html=True)
+                display_wine_card(
+                    rec_wine_meta, 
+                    card_key_prefix=f"rec_{i}", 
+                    is_base_wine=False,
+                    rag_explanation_content=rag_content_for_card 
+                )
+                st.markdown('</div>', unsafe_allow_html=True) # Close scrollable-card div
+            st.markdown('</div>', unsafe_allow_html=True) # Close horizontal-scroll-container
+
         
         elif st.session_state.initial_load_complete and not st.session_state.recommendations_list: 
              if st.session_state.base_wine_for_display: 
                 st.info(f"I found '{st.session_state.base_wine_for_display.get('name', 'your chosen wine')}', but couldn't find other similar wines matching all your filter criteria. Perhaps try adjusting the price range?")
 
+    # --- Progressive RAG data fetching LOGIC ---
     if st.session_state.initial_load_complete and st.session_state.base_blurb_fetched and \
        st.session_state.recommendations_list and st.session_state.base_wine_for_display:
         
         idx_to_fetch = st.session_state.get('fetch_rag_next_idx', 0) 
-
         if idx_to_fetch < len(st.session_state.recommendations_list):
             wine_to_explain = st.session_state.recommendations_list[idx_to_fetch]
             wine_pinecone_id_to_fetch = wine_to_explain.get('pinecone_id') 
-
             if wine_pinecone_id_to_fetch and wine_pinecone_id_to_fetch not in st.session_state.rag_explanations:
                 print(f"Progressive RAG (app.py): >>> ATTEMPTING TO FETCH RAG for Pinecone ID: {wine_pinecone_id_to_fetch}, Name: {wine_to_explain.get('name')}, Index: {idx_to_fetch} <<<")
-                
-                rag_data = wine_recommendation.generate_enhanced_rag_explanation(
-                    st.session_state.base_wine_for_display, 
-                    wine_to_explain
-                )
+                rag_data = wine_recommendation.generate_enhanced_rag_explanation(st.session_state.base_wine_for_display, wine_to_explain)
                 st.session_state.rag_explanations[wine_pinecone_id_to_fetch] = rag_data
                 st.session_state.fetch_rag_next_idx = idx_to_fetch + 1 
-                
                 print(f"Progressive RAG (app.py): Fetched for {wine_to_explain.get('name')}. Next index: {st.session_state.fetch_rag_next_idx}. Rerunning.")
                 st.rerun() 
-        
-        elif idx_to_fetch >= len(st.session_state.recommendations_list) and \
-             st.session_state.new_search_triggered: 
+        elif idx_to_fetch >= len(st.session_state.recommendations_list) and st.session_state.new_search_triggered: 
             print("DEBUG (app.py): All RAGs fetched for new search.")
             st.session_state.new_search_triggered = False 
     
