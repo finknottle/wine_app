@@ -18,21 +18,16 @@ def display_wine_card(wine_data, card_key_prefix, is_base_wine=False, base_wine_
         st.warning("Wine details are missing or in an incorrect format.")
         return
     
-    # Use pinecone_id if available, otherwise fallback for base wine or older data structure
-    # This pinecone_id is now expected to be present from wine_recommendation.py
     wine_id_for_key = wine_data.get('pinecone_id', wine_data.get('name', str(time.time()))) 
     
-    # Recommendation cards get their own bordered container
-    # Base wine's "container" styling is handled in main_app_layout
-    card_container_context = st.container(border=True) if not is_base_wine else st.container()
-
-    with card_container_context: 
+    # All cards will now use st.container(border=True)
+    with st.container(border=True): 
         col1, col2 = st.columns([1, 3]) 
 
         with col1:
             image_url = wine_data.get('image_url') 
             if image_url:
-                st.image(image_url, width=120) # Explicit width for consistent image sizing
+                st.image(image_url, width=120) 
             else:
                 st.caption("No image")
 
@@ -45,8 +40,9 @@ def display_wine_card(wine_data, card_key_prefix, is_base_wine=False, base_wine_
             
             details_to_display = []
             if wine_data.get('brand'): details_to_display.append(f"**🍷 Producer:** {wine_data.get('brand')}")
-            if wine_data.get('category'): details_to_display.append(f"**🍇 Category:** {wine_data.get('category')}")
-            if wine_data.get('country_of_origin'): details_to_display.append(f"**🌍 Origin:** {wine_data.get('country_of_origin')}")
+            # Category and Origin are commented out as per previous request
+            # if wine_data.get('category'): details_to_display.append(f"**🍇 Category:** {wine_data.get('category')}")
+            # if wine_data.get('country_of_origin'): details_to_display.append(f"**🌍 Origin:** {wine_data.get('country_of_origin')}")
             if wine_data.get('price') is not None:
                 details_to_display.append(f"**💲 Price:** ${wine_data.get('price'):.2f}")
             if wine_data.get('size'): details_to_display.append(f"**🍾 Size:** {wine_data.get('size')}") 
@@ -58,7 +54,7 @@ def display_wine_card(wine_data, card_key_prefix, is_base_wine=False, base_wine_
             
             for detail in details_to_display:
                 st.markdown(detail)
-            st.write("") # Add a little space
+            st.write("") 
 
             if is_base_wine and base_wine_summary_blurb:
                 st.markdown(f"**AI Somm on Your Pick:** _{base_wine_summary_blurb}_")
@@ -78,7 +74,7 @@ def display_wine_card(wine_data, card_key_prefix, is_base_wine=False, base_wine_
                 with st.expander("💡 AI Somm's Detailed Comparison", expanded=False): 
                     st.markdown(detailed_comparison_md, unsafe_allow_html=True)
         
-        # Combined Description and Reviews
+        # Combined Description and Reviews, now always in an expander, collapsed by default
         description = wine_data.get('description', '') 
         reviews_json_str = wine_data.get('reviews_json', '[]')
         reviews = []
@@ -88,38 +84,26 @@ def display_wine_card(wine_data, card_key_prefix, is_base_wine=False, base_wine_
                 if isinstance(loaded_reviews, list):
                     reviews = loaded_reviews
             except json.JSONDecodeError:
-                if not is_base_wine: 
-                    st.warning("Could not parse tasting notes for display.")
+                st.warning("Could not parse tasting notes for display.") # Show warning for any card
 
         if description or reviews:
-            expander_title = "📝 Tasting Notes, Description & Critic Reviews" if not is_base_wine else "📖 Description & Reviews"
-            if is_base_wine: # For base wine, display directly as it's within a styled section
-                st.markdown("---") # Separator before description/reviews
+            expander_title = "📝 Description, Tasting Notes & Critic Reviews"
+            with st.expander(expander_title, expanded=False): # Always collapsed by default
                 if description:
-                    st.markdown(f"**Product Description:**")
-                    st.write(description)
-                    if reviews: st.markdown("---")
+                    st.markdown(f"**Product Description:**\n{description}")
+                    if reviews: 
+                        st.markdown("---") 
+                
                 if reviews:
-                    st.markdown(f"**Tasting Notes & Critic Reviews:**")
+                    if description : st.markdown(f"**Tasting Notes & Critic Reviews:**") 
+                    elif not description: st.markdown(f"**Tasting Notes & Critic Reviews:**")
+
                     for review in reviews[:3]: 
                         if isinstance(review, dict):
                             author = review.get('author', 'Anonymous'); rating = review.get('rating'); review_text = review.get('review', '')
                             review_md = f"**{author}**"; 
                             if rating is not None: review_md += f" (Rating: {rating})"
                             review_md += f": {review_text}"; st.markdown(review_md)
-            else: # For recommendation cards, use an expander
-                with st.expander(expander_title):
-                    if description:
-                        st.markdown(f"**Product Description:**\n{description}")
-                        if reviews: 
-                            st.markdown("---") 
-                    if reviews:
-                        for review in reviews[:3]: 
-                            if isinstance(review, dict):
-                                author = review.get('author', 'Anonymous'); rating = review.get('rating'); review_text = review.get('review', '')
-                                review_md = f"**{author}**"; 
-                                if rating is not None: review_md += f" (Rating: {rating})"
-                                review_md += f": {review_text}"; st.markdown(review_md)
         st.write("") 
 
 
@@ -177,7 +161,6 @@ def main_app_layout():
         st.session_state.base_blurb_fetched = False 
 
         with st.spinner(f"Finding wines similar to '{user_selected_wine_name}'... 🥂"):
-            # recommend_wines_for_streamlit now returns base_blurb as None initially
             base_details, rec_list_meta_only, _ = wine_recommendation.recommend_wines_for_streamlit(
                 user_wine_name_input=user_selected_wine_name, top_k=5, 
                 price_min=price_min_filter, price_max=price_max_filter,
@@ -190,34 +173,25 @@ def main_app_layout():
         st.rerun() 
 
 
-    # --- Display Base Wine and Fetch its Blurb (if needed) ---
     if st.session_state.base_wine_for_display:
         # Fetch base wine blurb if not already fetched for this search
         if not st.session_state.base_blurb_fetched and st.session_state.initial_load_complete:
-            # No global spinner here, as this should be quick. 
-            # The main spinner was for the recommendation list fetch.
             print(f"DEBUG: Fetching blurb for base wine: {st.session_state.base_wine_for_display.get('name')}")
             st.session_state.base_blurb_for_display = wine_recommendation.generate_base_wine_blurb(st.session_state.base_wine_for_display)
             st.session_state.base_blurb_fetched = True
-            # Rerun to display the fetched blurb before proceeding to rec RAGs
-            # This ensures base wine card is fully populated before recs start their RAG loading
             print(f"DEBUG: Base blurb fetched. Rerunning to display.")
             st.rerun() 
 
         st.markdown("## 🍷 Your Selected Wine") 
-        st.markdown( # Apply styled div for base wine section
-            """<div class="base-wine-section-wrapper">""", unsafe_allow_html=True
-        )
+        # Base wine card is now also using st.container(border=True) via display_wine_card
         display_wine_card(
             st.session_state.base_wine_for_display, 
             card_key_prefix="base", 
             is_base_wine=True, 
             base_wine_summary_blurb=st.session_state.base_blurb_for_display
         )
-        st.markdown("</div>", unsafe_allow_html=True) # Close the styled div for base wine
         st.markdown("---") 
 
-        # --- Display Recommendations and Fetch RAG ---
         if st.session_state.recommendations_list:
             st.markdown("## ✨ AI Somm Recommends...") 
             
@@ -243,8 +217,6 @@ def main_app_layout():
              if st.session_state.base_wine_for_display: 
                 st.info(f"I found '{st.session_state.base_wine_for_display.get('name', 'your chosen wine')}', but couldn't find other similar wines matching all your filter criteria. Perhaps try adjusting the price range?")
 
-    # --- Progressive RAG data fetching LOGIC (runs after display attempts) ---
-    # Fetch RAG only if base blurb has been fetched and initial recs are loaded
     if st.session_state.initial_load_complete and st.session_state.base_blurb_fetched and \
        st.session_state.recommendations_list and st.session_state.base_wine_for_display:
         
@@ -257,7 +229,6 @@ def main_app_layout():
             if wine_pinecone_id_to_fetch and wine_pinecone_id_to_fetch not in st.session_state.rag_explanations:
                 print(f"Progressive RAG (app.py): >>> ATTEMPTING TO FETCH RAG for Pinecone ID: {wine_pinecone_id_to_fetch}, Name: {wine_to_explain.get('name')}, Index: {idx_to_fetch} <<<")
                 
-                # No global spinner here, individual cards show "pending..."
                 rag_data = wine_recommendation.generate_enhanced_rag_explanation(
                     st.session_state.base_wine_for_display, 
                     wine_to_explain
