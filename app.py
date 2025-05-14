@@ -4,15 +4,15 @@ import json
 import wine_recommendation # This will run the initialization code in wine_recommendation.py
 import time 
 
-st.set_page_config(page_title="AI Somm 🍇 Wine Recommender", layout="wide", initial_sidebar_state="expanded")
+# Item 1: Change initial_sidebar_state to "auto" or "collapsed"
+st.set_page_config(page_title="AI Somm 🍇 Wine Recommender", layout="wide", initial_sidebar_state="auto")
 
 #######################################
 # Card component 
 #######################################
 def display_wine_card(wine_data, card_key_prefix, is_base_wine=False, base_wine_summary_blurb=None, rag_explanation_content=None):
     """
-    Displays a wine card with details.
-    rag_explanation_content is the pre-fetched RAG data for this card.
+    Displays a wine card with details, aiming for a clean, Airbnb-style UX.
     """
     if not wine_data or not isinstance(wine_data, dict):
         st.warning("Wine details are missing or in an incorrect format.")
@@ -20,17 +20,13 @@ def display_wine_card(wine_data, card_key_prefix, is_base_wine=False, base_wine_
     
     wine_id_for_key = wine_data.get('pinecone_id', wine_data.get('name', str(time.time()))) 
     
-    # All cards use a bordered container for a consistent look
-    # The content of the card will be placed here.
-    # For horizontal scrolling, the card itself should not force full width.
-    
-    with st.container(border=True): 
+    with st.container(border=True): # Consistent bordered container for all cards
         col1, col2 = st.columns([1, 3]) # Image column, Text column
 
         with col1:
             image_url = wine_data.get('image_url') 
             if image_url:
-                st.image(image_url, width=100) # Slightly smaller image
+                st.image(image_url, width=120) 
             else:
                 st.caption("No image")
 
@@ -43,35 +39,32 @@ def display_wine_card(wine_data, card_key_prefix, is_base_wine=False, base_wine_
             
             details_to_display = []
             if wine_data.get('brand'): details_to_display.append(f"**🍷 Producer:** {wine_data.get('brand')}")
-            if wine_data.get('price') is not None: # Price is important
+            # Category and Origin are commented out as per previous request
+            # if wine_data.get('category'): details_to_display.append(f"**🍇 Category:** {wine_data.get('category')}")
+            # if wine_data.get('country_of_origin'): details_to_display.append(f"**🌍 Origin:** {wine_data.get('country_of_origin')}")
+            if wine_data.get('price') is not None:
                 details_to_display.append(f"**💲 Price:** ${wine_data.get('price'):.2f}")
-            if wine_data.get('avg_rating') is not None: # Rating is important
+            if wine_data.get('size'): details_to_display.append(f"**🍾 Size:** {wine_data.get('size')}") 
+            if wine_data.get('avg_rating') is not None:
                 rating_text = f"{wine_data.get('avg_rating'):.1f}"
                 if wine_data.get('best_rating_scale') is not None: rating_text += f" / {wine_data.get('best_rating_scale'):.0f}"
                 if wine_data.get('num_reviews') is not None: rating_text += f" ({wine_data.get('num_reviews')} reviews)"
                 details_to_display.append(f"**🌟 Avg. Rating:** {rating_text}")
             
-            # Less prominent details, can be shorter or in expander if needed
-            # For now, keep them, but be mindful of card height
-            if wine_data.get('category'): details_to_display.append(f"**🍇 Category:** {wine_data.get('category')}")
-            if wine_data.get('country_of_origin'): details_to_display.append(f"**🌍 Origin:** {wine_data.get('country_of_origin')}")
-            if wine_data.get('size'): details_to_display.append(f"**🍾 Size:** {wine_data.get('size')}") 
+            for detail_text in details_to_display:
+                st.markdown(detail_text) 
             
-            for detail in details_to_display:
-                st.markdown(f"<div style='font-size: 0.9rem; margin-bottom: 0.1rem;'>{detail}</div>", unsafe_allow_html=True)
-            # st.write("") # Removed to reduce vertical space
-
             if is_base_wine and base_wine_summary_blurb:
-                st.markdown(f"<div style='font-size: 0.95rem; margin-top: 0.5rem;'>**AI Somm on Your Pick:** _{base_wine_summary_blurb}_</div>", unsafe_allow_html=True)
+                st.markdown(f"**AI Somm on Your Pick:** _{base_wine_summary_blurb}_")
             
             if not is_base_wine: 
                 if rag_explanation_content and rag_explanation_content.get('recommended_wine_blurb'):
-                    st.markdown(f"<div style='font-size: 0.95rem; margin-top: 0.5rem;'>**Why You'll Love This Wine:** _{rag_explanation_content.get('recommended_wine_blurb')}_</div>", unsafe_allow_html=True)
+                    st.markdown(f"**Why You Might Like This:** _{rag_explanation_content.get('recommended_wine_blurb')}_")
                 elif not rag_explanation_content: 
                     st.caption("⏳ AI Somm is tasting this wine... notes coming in a few seconds, stay tuned!")
 
 
-        # Detailed Comparison Expander (for recommended wines)
+        # Detailed Comparison Expander (for recommended wines) 
         if not is_base_wine and rag_explanation_content: 
             detailed_comparison_md = rag_explanation_content.get('detailed_comparison_markdown')
             if detailed_comparison_md:
@@ -109,7 +102,8 @@ def display_wine_card(wine_data, card_key_prefix, is_base_wine=False, base_wine_
                             review_md = f"**{author}**"; 
                             if rating is not None: review_md += f" (Rating: {rating})"
                             review_md += f": {review_text}"; st.markdown(review_md)
-        # st.write("") # Removed to reduce vertical space
+        st.write("") # Adds a bit of vertical space at the end of card content
+
 
 #######################################
 # Main Streamlit App Layout
@@ -133,15 +127,21 @@ def main_app_layout():
     if 'initial_load_complete' not in st.session_state: st.session_state.initial_load_complete = False
     if 'base_blurb_fetched' not in st.session_state: st.session_state.base_blurb_fetched = False
 
+
     wine_names_list = wine_recommendation.get_all_wine_names() 
     
+    # Item 2: Selectbox for wine input (already in main area)
+    # Ensuring help text is concise.
     user_selected_wine_name = st.selectbox(
         "Tell us a wine you like...", 
         options=[""] + wine_names_list,  
         index=0, 
-        help="Start typing to search, or select from the list.",
+        help="Type or select a wine.", # More concise help text
         key="wine_selectbox_main"
     )
+    if not wine_names_list and not user_selected_wine_name: # Show if list is empty and user hasn't typed
+         st.caption("Wine list for autocomplete is loading or unavailable. You can still type a wine name.")
+
 
     with st.sidebar:
         st.header("💰 Price Filter")
@@ -178,6 +178,7 @@ def main_app_layout():
         print(f"DEBUG: Initial fetch complete. Base wine: {base_details.get('name') if base_details else 'None'}. Recs count: {len(rec_list_meta_only)}")
         st.rerun() 
 
+
     if st.session_state.base_wine_for_display:
         if not st.session_state.base_blurb_fetched and st.session_state.initial_load_complete:
             print(f"DEBUG: Fetching blurb for base wine: {st.session_state.base_wine_for_display.get('name')}")
@@ -198,64 +199,23 @@ def main_app_layout():
         if st.session_state.recommendations_list:
             st.markdown("## ✨ AI Somm's Picks") 
             
-            # --- Horizontal Scroll for Recommendations ---
-            # Inject CSS for horizontal scrolling flex container
-            # The key is that the items inside this container should not force full width.
-            # display_wine_card now uses st.container(border=True) which should behave well.
-            st.markdown("""
-                <style>
-                div.stButton > button {
-                    width: 100%;
-                }
-                .horizontal-scroll-container {
-                    display: flex;
-                    overflow-x: auto; /* Enables horizontal scrolling */
-                    overflow-y: hidden; /* Hides vertical scrollbar on the container itself */
-                    padding: 10px 0px 10px 0px; /* Add some padding */
-                    gap: 1rem; /* Space between cards */
-                    width: 100%; /* Ensure the container takes full width */
-                }
-                .scrollable-card {
-                    min-width: 320px; /* Minimum width of each card */
-                    max-width: 360px; /* Maximum width of each card */
-                    flex: 0 0 auto;   /* Prevents cards from shrinking/growing, maintains their width */
-                    /* border: 1px solid #e0e0e0; /* Moved border to st.container in display_wine_card */
-                    /* border-radius: 0.5rem; */
-                    /* padding: 1rem; */ /* Padding is handled by st.container now */
-                    /* background-color: #ffffff; */ /* Background is handled by st.container */
-                    /* margin-bottom: 10px; */ /* Redundant due to gap */
-                }
-                /* Hide scrollbar for Chrome, Safari and Opera */
-                .horizontal-scroll-container::-webkit-scrollbar {
-                    display: none;
-                }
-                /* Hide scrollbar for IE, Edge and Firefox */
-                .horizontal-scroll-container {
-                    -ms-overflow-style: none;  /* IE and Edge */
-                    scrollbar-width: none;  /* Firefox */
-                }
-                </style>
-            """, unsafe_allow_html=True)
-
-            # Create the flex container
-            st.markdown('<div class="horizontal-scroll-container">', unsafe_allow_html=True)
-            for i, rec_wine_meta in enumerate(st.session_state.recommendations_list):
-                wine_pinecone_id = rec_wine_meta.get('pinecone_id') 
-                rag_content_for_card = st.session_state.rag_explanations.get(wine_pinecone_id)
-                
-                # Each card is an item in the flex container
-                # We use st.markdown to inject the div for each card, then call display_wine_card
-                # The display_wine_card will create its own bordered st.container inside this div
-                st.markdown('<div class="scrollable-card">', unsafe_allow_html=True)
-                display_wine_card(
-                    rec_wine_meta, 
-                    card_key_prefix=f"rec_{i}", 
-                    is_base_wine=False,
-                    rag_explanation_content=rag_content_for_card 
-                )
-                st.markdown('</div>', unsafe_allow_html=True) # Close scrollable-card div
-            st.markdown('</div>', unsafe_allow_html=True) # Close horizontal-scroll-container
-
+            recommendations_to_show = st.session_state.recommendations_list
+            num_recs_to_show = len(recommendations_to_show)
+            cols_to_display = min(num_recs_to_show, 3) if num_recs_to_show > 0 else 1 
+            
+            if num_recs_to_show > 0 :
+                cols = st.columns(cols_to_display)
+                for i, rec_wine_meta in enumerate(recommendations_to_show):
+                    wine_pinecone_id = rec_wine_meta.get('pinecone_id') 
+                    rag_content_for_card = st.session_state.rag_explanations.get(wine_pinecone_id)
+                    
+                    with cols[i % cols_to_display]: 
+                        display_wine_card(
+                            rec_wine_meta, 
+                            card_key_prefix=f"rec_{i}", 
+                            is_base_wine=False,
+                            rag_explanation_content=rag_content_for_card 
+                        )
         
         elif st.session_state.initial_load_complete and not st.session_state.recommendations_list: 
              if st.session_state.base_wine_for_display: 
