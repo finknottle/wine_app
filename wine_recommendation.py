@@ -165,9 +165,12 @@ def create_text_for_query_embedding(wine_metadata, *, include_identity: bool = T
     if description_text:
         parts.append(f"\nTasting notes:\n{description_text}")
 
+    # Keywords can be identity-heavy (producer/name). Keep them, but bias toward the tail terms
+    # which more often contain varietal/region/style.
     keywords_list = wine_metadata.get("keywords_list")
     if keywords_list and isinstance(keywords_list, list):
-        parts.append(f"\nTags/Keywords: {', '.join(keywords_list)}.")
+        tail = keywords_list[-8:] if len(keywords_list) > 8 else keywords_list
+        parts.append(f"\nTags/Keywords: {', '.join(tail)}.")
 
     # Keep review text minimal (1–2 snippets) to reduce noise
     reviews_section_for_embedding = []
@@ -403,11 +406,21 @@ def search_similar_wines(base_wine_metadata, top_k=5, price_min=0.0, price_max=9
 
     processed_ids = set(); same_producer_as_base_count = 0; producer_counts_in_recs = {}
 
+    # Adaptive constraints: start strict, relax if we can't fill top_k.
+    allow_cuvee_duplicates = False
+
     print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Processing {len(query_result['matches'])} candidates for diversity (top_k={top_k}, max_same_as_base={max_same_producer_as_base}, max_per_any={max_per_any_producer})...")
     print(f"--- [{time.strftime('%Y-%m-%d %H:%M:%S')}] Base Wine For Diversity: Name='{base_wine_metadata.get('name')}', Effective Producer='{base_producer_for_diversity}' ---")
 
     for match_idx, match in enumerate(query_result["matches"]):
-        if len(final_recommendations) >= top_k: print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Reached {top_k} recs."); break 
+        if len(final_recommendations) >= top_k:
+            print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Reached {top_k} recs.")
+            break
+
+        # If we're halfway through candidates and still have very few results, relax cuvée dedupe.
+        if (not allow_cuvee_duplicates) and match_idx > (len(query_result["matches"]) // 2) and len(final_recommendations) < max(2, top_k // 2):
+            allow_cuvee_duplicates = True
+            print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Relaxing cuvée dedupe to fill recommendations.")
         if not match or not match.get("metadata"): print(f"⚠️ {time.strftime('%Y-%m-%d %H:%M:%S')} - Candidate {match_idx+1} malformed."); continue 
         
         metadata = match["metadata"]; score = match.get("score", 0.0); pinecone_vector_id = match.get("id")
@@ -426,7 +439,7 @@ def search_similar_wines(base_wine_metadata, top_k=5, price_min=0.0, price_max=9
 
         # Prevent "same wine across vintages" spam.
         cuvee_key = _normalize_cuvee_key(current_wine_name)
-        if cuvee_key and cuvee_key in seen_cuvee_keys:
+        if (not allow_cuvee_duplicates) and cuvee_key and cuvee_key in seen_cuvee_keys:
             continue
         
         print(f"--- [{time.strftime('%Y-%m-%d %H:%M:%S')}] Eval Candidate {match_idx + 1}: '{current_wine_name}' (Score: {score:.4f}) ---")
