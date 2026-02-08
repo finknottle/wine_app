@@ -20,20 +20,31 @@ SESSION_DEFAULTS = {
     "new_search_triggered": False,
     "initial_load_complete": False,
     "base_blurb_fetched": False,
-    "feedback": {},  # {pinecone_id: "up"|"down"}
+    # Session-only preference signals
+    "liked_wines": [],  # list[str] of wine names the user liked
+    "disliked_ids": set(),  # set[str] of pinecone_ids to hide
+    "blocked_producers": set(),  # set[str] of producers to hide (session only)
 }
 
 
 def init_session_state():
     for k, v in SESSION_DEFAULTS.items():
         if k not in st.session_state:
-            st.session_state[k] = v
+            # Avoid sharing mutable defaults like set()/list() across sessions
+            if isinstance(v, (list, dict, set)):
+                st.session_state[k] = v.__class__()
+            else:
+                st.session_state[k] = v
 
 
 def reset_session_state():
     # Reset our own keys
     for k, v in SESSION_DEFAULTS.items():
-        st.session_state[k] = v
+        # Avoid sharing mutable defaults like set()/list() across sessions
+        if isinstance(v, (list, dict, set)):
+            st.session_state[k] = v.__class__()
+        else:
+            st.session_state[k] = v
 
     # Reset input widgets
     st.session_state["wine_selectbox_main"] = ""
@@ -154,6 +165,43 @@ def display_wine_card(
 # Main Streamlit App Layout
 #######################################
 
+def run_new_search(wine_name: str, price_min: float, price_max: float):
+    """Start a brand-new search and reset result-related state."""
+    st.session_state.new_search_triggered = True
+    st.session_state.base_wine_for_display = None
+    st.session_state.recommendations_list = []
+    st.session_state.base_blurb_for_display = None
+    st.session_state.rag_explanations = {}
+    st.session_state.fetch_rag_next_idx = 0
+    st.session_state.initial_load_complete = False
+    st.session_state.base_blurb_fetched = False
+
+    with st.spinner(f"Finding wines similar to '{wine_name}'… 🥂"):
+        base_details, rec_list_meta_only, _ = wine_recommendation.recommend_wines_for_streamlit(
+            user_wine_name_input=wine_name,
+            top_k=5,
+            price_min=price_min,
+            price_max=price_max,
+            min_confidence_score=wine_recommendation.DEFAULT_CONFIDENCE_SCORE,
+        )
+
+    st.session_state.base_wine_for_display = base_details
+
+    # Apply session-only filters (dislikes/producer blocks)
+    filtered = []
+    for w in rec_list_meta_only or []:
+        pid = w.get("pinecone_id")
+        producer = (w.get("brand") or "").strip().lower()
+        if pid and pid in st.session_state.disliked_ids:
+            continue
+        if producer and producer in st.session_state.blocked_producers:
+            continue
+        filtered.append(w)
+
+    st.session_state.recommendations_list = filtered
+    st.session_state.initial_load_complete = True
+
+
 def main_app_layout():
     init_session_state()
 
@@ -175,6 +223,11 @@ def main_app_layout():
         if st.button("🔄 Reset", use_container_width=True):
             reset_session_state()
             st.rerun()
+
+        if st.session_state.liked_wines:
+            st.caption("Recent likes")
+            for w in st.session_state.liked_wines[-5:][::-1]:
+                st.write(f"• {w}")
 
         st.header("💰 Price Filter")
         min_catalog_price = 0.0
@@ -234,28 +287,7 @@ def main_app_layout():
 
     # --- Initial search ---
     if submit_button and user_selected_wine_name:
-        st.session_state.new_search_triggered = True
-        st.session_state.base_wine_for_display = None
-        st.session_state.recommendations_list = []
-        st.session_state.base_blurb_for_display = None
-        st.session_state.rag_explanations = {}
-        st.session_state.fetch_rag_next_idx = 0
-        st.session_state.initial_load_complete = False
-        st.session_state.base_blurb_fetched = False
-        st.session_state.feedback = {}
-
-        with st.spinner(f"Finding wines similar to '{user_selected_wine_name}'… 🥂"):
-            base_details, rec_list_meta_only, _ = wine_recommendation.recommend_wines_for_streamlit(
-                user_wine_name_input=user_selected_wine_name,
-                top_k=5,
-                price_min=price_min_filter,
-                price_max=price_max_filter,
-                min_confidence_score=wine_recommendation.DEFAULT_CONFIDENCE_SCORE,
-            )
-
-        st.session_state.base_wine_for_display = base_details
-        st.session_state.recommendations_list = rec_list_meta_only
-        st.session_state.initial_load_complete = True
+        run_new_search(user_selected_wine_name, price_min_filter, price_max_filter)
         st.rerun()
 
     # --- Display results ---
@@ -299,15 +331,33 @@ def main_app_layout():
                             rag_explanation_content=rag_content_for_card,
                         )
 
-                        # Lightweight feedback (no backend yet, just UI/UX)
+                        # Feedback actions (session-only):
+                        # - 👍 re-anchors the search on this recommended wine
+                        # - 👎 hides this wine (and optionally blocks its producer) for this session
                         if wine_pinecone_id:
                             fcol1, fcol2 = st.columns(2)
+
                             with fcol1:
                                 if st.button("👍 More like this", key=f"fb_up_{wine_pinecone_id}"):
-                                    st.session_state.feedback[wine_pinecone_id] = "up"
+                                    rec_name = (rec_wine_meta.get("name") or "").strip()
+                                    if rec_name:
+                                        st.session_state.liked_wines.append(rec_name)
+                                        run_new_search(rec_name, price_min_filter, price_max_filter)
+                                        st.rerun()
+
                             with fcol2:
                                 if st.button("👎 Less like this", key=f"fb_down_{wine_pinecone_id}"):
-                                    st.session_state.feedback[wine_pinecone_id] = "down"
+                                    st.session_state.disliked_ids.add(wine_pinecone_id)
+                                    producer = (rec_wine_meta.get("brand") or "").strip().lower()
+                                    if producer:
+                                        st.session_state.blocked_producers.add(producer)
+
+                                    # Remove it from the current list immediately
+                                    st.session_state.recommendations_list = [
+                                        w for w in st.session_state.recommendations_list
+                                        if w.get("pinecone_id") != wine_pinecone_id
+                                    ]
+                                    st.rerun()
 
         elif st.session_state.initial_load_complete and not st.session_state.recommendations_list:
             st.info(
