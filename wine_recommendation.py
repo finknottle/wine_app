@@ -379,7 +379,10 @@ def search_similar_wines(base_wine_metadata, top_k=5, price_min=0.0, price_max=9
     if price_filters: pinecone_filter["$and"] = price_filters
     if pinecone_filter: print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Pinecone filter: {pinecone_filter}")
     else: print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - No price filter.")
-    query_result = None; num_candidates_to_fetch = top_k * 10 
+    query_result = None
+    # Fetch a lot more than top_k to avoid "same bottle across vintages" dominating the head.
+    # KLWines-style catalogs often have many near-duplicates.
+    num_candidates_to_fetch = max(top_k * 50, 250)
     try:
         print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Querying Pinecone for {num_candidates_to_fetch} candidates...")
         query_result = index.query(vector=query_vector, filter=pinecone_filter if pinecone_filter else None, top_k=num_candidates_to_fetch, include_metadata=True)
