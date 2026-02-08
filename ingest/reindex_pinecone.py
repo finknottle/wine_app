@@ -107,12 +107,37 @@ def main():
     ap.add_argument("--checkpoint", default="ingest/out/checkpoint.json")
     args = ap.parse_args()
 
+    def load_dotenv_loose(dotenv_path: Path) -> None:
+        """Load a .env file without requiring python-dotenv.
+
+        Supports lines like:
+          KEY=value
+          KEY = "value"
+        Ignores blank lines and comments (# ...).
+        """
+        if not dotenv_path.exists():
+            return
+        for line in dotenv_path.read_text(errors="ignore").splitlines():
+            s = line.strip()
+            if not s or s.startswith("#"):
+                continue
+            if "=" not in s:
+                continue
+            k, v = s.split("=", 1)
+            k = k.strip()
+            v = v.strip().strip('"').strip("'")
+            if k and v and k not in os.environ:
+                os.environ[k] = v
+
+    # Load .env from repo root if present
+    load_dotenv_loose(Path(".env"))
+
     openai_key = os.getenv("OPENAI_API_KEY")
     pinecone_key = os.getenv("PINECONE_API_KEY")
     if not openai_key:
-        raise SystemExit("Missing OPENAI_API_KEY")
+        raise SystemExit("Missing OPENAI_API_KEY (set env var or add to .env)")
     if not pinecone_key:
-        raise SystemExit("Missing PINECONE_API_KEY")
+        raise SystemExit("Missing PINECONE_API_KEY (set env var or add to .env)")
 
     # Embedding dims
     embedding_dim = 3072 if args.embedding_model == "text-embedding-3-large" else 1536
