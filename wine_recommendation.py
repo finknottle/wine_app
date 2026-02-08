@@ -370,9 +370,9 @@ def search_similar_wines(base_wine_metadata, top_k=5, price_min=0.0, price_max=9
         if base_producer_for_diversity and candidate_producer_for_diversity and base_producer_for_diversity == candidate_producer_for_diversity:
             is_same_as_base_producer = True
             print(f"    Identified as SAME producer as base by direct brand/heuristic match: '{base_producer_for_diversity}'")
-        if not is_same_as_base_producer and base_producer_for_diversity and len(base_producer_for_diversity) > 2 and base_producer_for_diversity in current_wine_name_lower:
-            is_same_as_base_producer = True
-            print(f"    Identified as SAME producer as base by NAME MATCH: base_producer '{base_producer_for_diversity}' in candidate_name '{current_wine_name_lower}'.")
+        # NOTE: We intentionally avoid substring "name contains producer" matching here.
+    # It was too aggressive with the KLWines dataset and could collapse diversity,
+    # yielding only 1-2 recommendations.
         
         if is_same_as_base_producer:
             if same_producer_as_base_count >= max_same_producer_as_base:
