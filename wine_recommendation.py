@@ -644,6 +644,25 @@ def search_similar_wines(base_wine_metadata, top_k=5, price_min=0.0, price_max=9
         if cuvee_key:
             seen_cuvee_keys.add(cuvee_key)
             
+    # If constraints + diversification still yielded too few, fall back to filling from
+    # the broader candidate pool (no producer/cuvée constraints), to avoid returning 1.
+    if len(final_recommendations) < top_k:
+        already = {m.get("pinecone_id") for m in final_recommendations if m.get("pinecone_id")}
+        for m in candidates:
+            if len(final_recommendations) >= top_k:
+                break
+            md = (m.get("metadata") or {})
+            pid = m.get("id")
+            nm = (md.get("name") or "").strip()
+            if not pid or pid in already:
+                continue
+            if nm and nm.lower() == base_wine_name_lower:
+                continue
+            md["pinecone_id"] = pid
+            md["similarity_score"] = m.get("score", 0.0)
+            final_recommendations.append(md)
+            already.add(pid)
+
     print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Finished. Returning {len(final_recommendations)} recommendations.")
     return final_recommendations
     
