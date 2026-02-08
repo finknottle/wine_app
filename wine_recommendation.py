@@ -540,8 +540,19 @@ def search_similar_wines(base_wine_metadata, top_k=5, price_min=0.0, price_max=9
     base_producer_for_diversity = extract_brand_from_name_heuristic(base_wine_metadata.get("name", ""))
     if base_wine_brand_from_meta and isinstance(base_wine_brand_from_meta, str) and base_wine_brand_from_meta.strip() and base_wine_brand_from_meta != "N/A":
         base_producer_for_diversity = base_wine_brand_from_meta.lower()
-    elif base_producer_for_diversity: base_producer_for_diversity = base_producer_for_diversity.lower()
-    else: base_producer_for_diversity = "" 
+    elif base_producer_for_diversity:
+        base_producer_for_diversity = base_producer_for_diversity.lower()
+    else:
+        base_producer_for_diversity = ""
+
+    # When using the v3 KLWines index, producer limits are often counterproductive:
+    # the nearest neighborhood can contain many same-producer variants, and hard producer
+    # caps can collapse the list to 1. Multi-query + MMR already provides diversity.
+    using_v3_index = bool((base_wine_metadata.get("embedding_text") or "").strip())
+    if using_v3_index:
+        max_same_producer_as_base = top_k
+        max_per_any_producer = top_k
+        base_producer_for_diversity = ""
 
     processed_ids = set(); same_producer_as_base_count = 0; producer_counts_in_recs = {}
 
