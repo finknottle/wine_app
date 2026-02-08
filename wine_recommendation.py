@@ -126,46 +126,77 @@ def extract_brand_from_name_heuristic(wine_name_str):
     if potential_brand.lower() in [term.lower() for term in ["rhone", "paso robles", "napa", "valley", "red", "white", "rose"]]: return ""
     return potential_brand.lower() 
 
-def create_text_for_query_embedding(wine_metadata):
-    if not wine_metadata or not isinstance(wine_metadata, dict): return "No wine data available."
-    parts = []; wine_name_str = wine_metadata.get("name")
-    if wine_name_str: parts.append(f"Wine: {wine_name_str}.")
-    brand_for_embedding = get_field(wine_metadata, "brand")
-    if brand_for_embedding == "N/A" or not brand_for_embedding: brand_for_embedding = extract_brand_from_name_heuristic(wine_name_str)
-    if brand_for_embedding: parts.append(f"Producer: {brand_for_embedding}.")
-    if wine_metadata.get("category"): parts.append(f"Type/Category: {wine_metadata['category']}.")
-    if wine_metadata.get("country_of_origin"): parts.append(f"Origin: {wine_metadata['country_of_origin']}.")
-    if wine_metadata.get("size"): parts.append(f"Bottle Size: {wine_metadata['size']}.")
+def create_text_for_query_embedding(wine_metadata, *, include_identity: bool = True):
+    """Build query text for embeddings.
+
+    Key fix for KLWines-style catalogs:
+    - If we include *too much identity* (producer/name/vintage), nearest neighbors
+      become the same bottle across vintages.
+    - For recommendation retrieval we want more *style-level* similarity.
+
+    Set include_identity=False to down-weight exact producer/name matching.
+    """
+
+    if not wine_metadata or not isinstance(wine_metadata, dict):
+        return "No wine data available."
+
+    parts = []
+    wine_name_str = wine_metadata.get("name")
+
+    if include_identity and wine_name_str:
+        parts.append(f"Wine: {wine_name_str}.")
+
+    # Producer is helpful, but can dominate; only include when include_identity=True
+    if include_identity:
+        brand_for_embedding = get_field(wine_metadata, "brand")
+        if brand_for_embedding == "N/A" or not brand_for_embedding:
+            brand_for_embedding = extract_brand_from_name_heuristic(wine_name_str)
+        if brand_for_embedding:
+            parts.append(f"Producer: {brand_for_embedding}.")
+
+    if wine_metadata.get("category"):
+        parts.append(f"Type/Category: {wine_metadata['category']}.")
+    if wine_metadata.get("country_of_origin"):
+        parts.append(f"Origin: {wine_metadata['country_of_origin']}.")
+    if wine_metadata.get("size"):
+        parts.append(f"Bottle Size: {wine_metadata['size']}.")
+
     description_text = wine_metadata.get("description")
-    if description_text: parts.append(f"\nProduct Description:\n{description_text}")
-    keywords_list = wine_metadata.get("keywords_list") 
-    if keywords_list and isinstance(keywords_list, list): parts.append(f"\nTags/Keywords: {', '.join(keywords_list)}.")
-    reviews_section_for_embedding = [] 
+    if description_text:
+        parts.append(f"\nTasting notes:\n{description_text}")
+
+    keywords_list = wine_metadata.get("keywords_list")
+    if keywords_list and isinstance(keywords_list, list):
+        parts.append(f"\nTags/Keywords: {', '.join(keywords_list)}.")
+
+    # Keep review text minimal (1–2 snippets) to reduce noise
+    reviews_section_for_embedding = []
     reviews_json_str = wine_metadata.get("reviews_json", "[]")
     try:
         reviews_data = json.loads(reviews_json_str)
         if isinstance(reviews_data, list):
-            for review_item in reviews_data: 
+            for review_item in reviews_data[:2]:
                 if isinstance(review_item, dict) and review_item.get("review"):
-                    review_text = f"- Reviewer: {review_item.get('author', 'N/A')}"
-                    if review_item.get('rating') is not None: review_text += f", Score: {review_item['rating']}"
-                    review_text += f": \"{review_item['review']}\"" 
-                    reviews_section_for_embedding.append(review_text)
-    except json.JSONDecodeError: print(f"⚠️ {time.strftime('%Y-%m-%d %H:%M:%S')} - Could not parse reviews_json for embedding: {reviews_json_str}")
-    if reviews_section_for_embedding: parts.append("\nExpert Reviews and Tasting Notes:\n" + "\n".join(reviews_section_for_embedding))
-    else: parts.append("\nGeneral characteristics based on type and origin.")
-    agg_rating_json_str = wine_metadata.get("aggregateRating_json", "{}")
-    if not reviews_section_for_embedding: 
-        try:
-            agg_rating_data = json.loads(agg_rating_json_str)
-            if isinstance(agg_rating_data, dict) and agg_rating_data.get("ratingValue") is not None:
-                rating_text = f"Overall Rating: {agg_rating_data['ratingValue']}"
-                if agg_rating_data.get("bestRating"): rating_text += f" out of {agg_rating_data['bestRating']}"
-                if agg_rating_data.get("reviewCount"): rating_text += f" (based on {agg_rating_data['reviewCount']} reviews)."
-                parts.append(rating_text)
-        except json.JSONDecodeError: print(f"⚠️ {time.strftime('%Y-%m-%d %H:%M:%S')} - Could not parse aggregateRating_json for embedding: {agg_rating_json_str}")
-    full_text = "\n".join(filter(None, parts)); full_text = "\n".join([line.strip() for line in full_text.splitlines() if line.strip()])
-    if not full_text.strip(): return f"Basic wine entry for {wine_metadata.get('name', 'Unknown Wine')}."
+                    txt = str(review_item.get("review"))
+                    txt = re.sub(r"\s+", " ", txt).strip()
+                    if len(txt) > 260:
+                        txt = txt[:260].rstrip() + "…"
+                    author = review_item.get("author", "Critic")
+                    rating = review_item.get("rating")
+                    if rating is not None:
+                        reviews_section_for_embedding.append(f"Critic ({author}) {rating}: {txt}")
+                    else:
+                        reviews_section_for_embedding.append(f"Critic ({author}): {txt}")
+    except Exception:
+        pass
+
+    if reviews_section_for_embedding:
+        parts.append("\nCritic notes:\n" + "\n".join(reviews_section_for_embedding))
+
+    full_text = "\n".join(filter(None, parts))
+    full_text = "\n".join([line.strip() for line in full_text.splitlines() if line.strip()])
+    if not full_text.strip():
+        return f"Basic wine entry for {wine_metadata.get('name', 'Unknown Wine')}."
     return full_text
 
 def generate_embedding(text_to_embed):
@@ -315,7 +346,8 @@ def search_similar_wines(base_wine_metadata, top_k=5, price_min=0.0, price_max=9
                          max_same_producer_as_base=MAX_SAME_PRODUCER_RECS, 
                          max_per_any_producer=MAX_WINES_FROM_ANY_SINGLE_PRODUCER): 
     print(f"🔎 {time.strftime('%Y-%m-%d %H:%M:%S')} - Searching similar to: '{base_wine_metadata.get('name', 'Unknown')}'")
-    query_text = create_text_for_query_embedding(base_wine_metadata)
+    # Style-first query to avoid returning the same producer/bottle across vintages.
+    query_text = create_text_for_query_embedding(base_wine_metadata, include_identity=False)
     query_vector = generate_embedding(query_text)
     if np.all(np.array(query_vector) == 0): st.error("Could not generate search profile."); return []
     pinecone_filter = {}; price_filters = []
