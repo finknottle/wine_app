@@ -342,6 +342,27 @@ Example: "You seem to enjoy wines that are full-bodied and fruit-forward, with h
         print(f"⚠️ {time.strftime('%Y-%m-%d %H:%M:%S')} - Failed to generate base wine blurb: {e}")
         return default_blurb
 
+def _normalize_cuvee_key(name: str) -> str:
+    """Normalize a wine name to avoid recommending the same cuvée across vintages.
+
+    Example: "2017 Booker 'Fracture' Paso Robles Syrah" and
+             "2018 Booker 'Fracture' Paso Robles Syrah" -> same key.
+
+    Heuristic only; ok if imperfect.
+    """
+    if not name:
+        return ""
+    s = name.lower()
+    # drop vintage
+    s = re.sub(r"\b(19\d{2}|20\d{2})\b", " ", s)
+    # normalize quotes
+    s = s.replace("\"", " ").replace("'", " ").replace("’", " ")
+    # drop punctuation-ish
+    s = re.sub(r"[^a-z0-9\s]", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
 def search_similar_wines(base_wine_metadata, top_k=5, price_min=0.0, price_max=999999.0, 
                          max_same_producer_as_base=MAX_SAME_PRODUCER_RECS, 
                          max_per_any_producer=MAX_WINES_FROM_ANY_SINGLE_PRODUCER): 
@@ -366,7 +387,10 @@ def search_similar_wines(base_wine_metadata, top_k=5, price_min=0.0, price_max=9
     except Exception as e: st.error(f"Search failed: {e}"); print(f"❌ {time.strftime('%Y-%m-%d %H:%M:%S')} - Pinecone query failed: {e}"); return []
     if not query_result or "matches" not in query_result or not query_result["matches"]: print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - No matches from Pinecone."); return []
     
-    final_recommendations = []; base_wine_name_lower = base_wine_metadata.get("name", "").lower(); 
+    final_recommendations = []
+    base_wine_name_lower = base_wine_metadata.get("name", "").lower()
+    base_cuvee_key = _normalize_cuvee_key(base_wine_metadata.get("name", ""))
+    seen_cuvee_keys = set([base_cuvee_key]) if base_cuvee_key else set()
     base_wine_brand_from_meta = base_wine_metadata.get("brand")
     base_producer_for_diversity = extract_brand_from_name_heuristic(base_wine_metadata.get("name", "")) 
     if base_wine_brand_from_meta and isinstance(base_wine_brand_from_meta, str) and base_wine_brand_from_meta.strip() and base_wine_brand_from_meta != "N/A":
@@ -392,8 +416,15 @@ def search_similar_wines(base_wine_metadata, top_k=5, price_min=0.0, price_max=9
         elif candidate_producer_for_diversity: candidate_producer_for_diversity = candidate_producer_for_diversity.lower()
         else: candidate_producer_for_diversity = ""
 
-        if not pinecone_vector_id or pinecone_vector_id in processed_ids: continue 
-        if base_wine_name_lower == current_wine_name_lower: continue 
+        if not pinecone_vector_id or pinecone_vector_id in processed_ids:
+            continue
+        if base_wine_name_lower == current_wine_name_lower:
+            continue
+
+        # Prevent "same wine across vintages" spam.
+        cuvee_key = _normalize_cuvee_key(current_wine_name)
+        if cuvee_key and cuvee_key in seen_cuvee_keys:
+            continue
         
         print(f"--- [{time.strftime('%Y-%m-%d %H:%M:%S')}] Eval Candidate {match_idx + 1}: '{current_wine_name}' (Score: {score:.4f}) ---")
         print(f"    Metadata Brand: '{candidate_brand_from_meta}', Heuristic Brand: '{extract_brand_from_name_heuristic(current_wine_name)}', Effective Candidate Producer: '{candidate_producer_for_diversity}'")
@@ -425,9 +456,11 @@ def search_similar_wines(base_wine_metadata, top_k=5, price_min=0.0, price_max=9
                 print(f"    ACCEPTED (Different Producer): '{current_wine_name}'. This producer in recs: {producer_counts_in_recs.get(candidate_producer_for_diversity,0)}/{max_per_any_producer}")
 
         metadata["pinecone_id"] = pinecone_vector_id
-        metadata["similarity_score"] = score 
-        final_recommendations.append(metadata) 
+        metadata["similarity_score"] = score
+        final_recommendations.append(metadata)
         processed_ids.add(pinecone_vector_id)
+        if cuvee_key:
+            seen_cuvee_keys.add(cuvee_key)
             
     print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Finished. Returning {len(final_recommendations)} recommendations.")
     return final_recommendations
