@@ -36,6 +36,27 @@ print(f"PINECONE_INDEX_NAME: {PINECONE_INDEX_NAME}")
 print(f"EMBEDDING_MODEL: {EMBEDDING_MODEL}")
 print(f"--- END CONFIGURATION ---")
 
+
+def get_runtime_config():
+    """Expose non-secret runtime config for debugging in the Streamlit UI."""
+    try:
+        stats = index.describe_index_stats()
+        # Pinecone returns an object; make it JSON-serializable-ish
+        stats_out = {
+            "dimension": getattr(stats, "dimension", None),
+            "total_vector_count": getattr(stats, "total_vector_count", None),
+            "namespaces": getattr(stats, "namespaces", None),
+        }
+    except Exception as e:
+        stats_out = {"error": str(e)}
+
+    return {
+        "pinecone_index_name": PINECONE_INDEX_NAME,
+        "embedding_model": EMBEDDING_MODEL,
+        "embedding_dimension": EMBEDDING_DIMENSION,
+        "index_stats": stats_out,
+    }
+
 if not PINECONE_API_KEY or not OPENAI_API_KEY or not PINECONE_INDEX_NAME:
     error_message = "🚨 Missing API keys or Pinecone index name in configuration."
     print(f"❌ {time.strftime('%Y-%m-%d %H:%M:%S')} - {error_message}")

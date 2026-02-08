@@ -292,6 +292,18 @@ def main_app_layout():
 
     st.title("🍇 AI Somm")
     st.caption(f"Version: {APP_VERSION}")
+
+    with st.sidebar:
+        with st.expander("Debug", expanded=False):
+            try:
+                cfg = wine_recommendation.get_runtime_config()
+                st.write("Pinecone index:", cfg.get("pinecone_index_name"))
+                st.write("Embedding model:", cfg.get("embedding_model"))
+                st.write("Embedding dim:", cfg.get("embedding_dimension"))
+                st.write("Index stats:")
+                st.json(cfg.get("index_stats"))
+            except Exception as e:
+                st.write("Debug unavailable:", str(e))
     st.markdown("### Let us help you find your next favorite wine!")
     st.markdown(
         """
