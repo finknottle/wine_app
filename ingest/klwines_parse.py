@@ -130,6 +130,35 @@ class KlwinesRecord:
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
+
+        # Pinecone metadata constraints:
+        # values must be string/number/bool or list[str]. Nested dict/list[dict] is not allowed.
+        if d.get("aggregate_rating") is not None:
+            try:
+                d["aggregate_rating"] = json.dumps(d["aggregate_rating"], ensure_ascii=False)
+            except Exception:
+                d["aggregate_rating"] = str(d["aggregate_rating"])
+
+        if d.get("reviews") is not None:
+            reviews = d.get("reviews") or []
+            out: list[str] = []
+            if isinstance(reviews, list):
+                for r in reviews[:3]:
+                    if not isinstance(r, dict):
+                        continue
+                    author = (r.get("author") or "Critic").strip() if isinstance(r.get("author"), str) else "Critic"
+                    rating = r.get("rating")
+                    txt = (r.get("review") or "").strip() if isinstance(r.get("review"), str) else ""
+                    if txt and len(txt) > 240:
+                        txt = txt[:240].rstrip() + "…"
+                    if rating is not None and txt:
+                        out.append(f"{author} ({rating}): {txt}")
+                    elif txt:
+                        out.append(f"{author}: {txt}")
+                    elif rating is not None:
+                        out.append(f"{author} rating: {rating}")
+            d["reviews"] = out or None
+
         # Remove empty fields for cleaner JSONL
         return {k: v for k, v in d.items() if v not in (None, "", [], {})}
 
