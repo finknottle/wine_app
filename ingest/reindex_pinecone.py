@@ -27,6 +27,11 @@ from typing import Any
 import openai
 from pinecone import Pinecone, ServerlessSpec
 
+# Ensure repo root is on sys.path so `ingest.*` imports work when executed as a script
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 # Local imports
 from ingest.klwines_parse import parse_klwines_product_html, is_wine_product
 from ingest.embedding_text import build_embedding_text
