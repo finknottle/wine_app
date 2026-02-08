@@ -284,10 +284,14 @@ def run_new_vibe_search(vibe_text: str, price_min: float, price_max: float):
     st.session_state.initial_load_complete = True
 
 
+APP_VERSION = "d24e2b5"
+
+
 def main_app_layout():
     init_session_state()
 
     st.title("🍇 AI Somm")
+    st.caption(f"Version: {APP_VERSION}")
     st.markdown("### Let us help you find your next favorite wine!")
     st.markdown(
         """
