@@ -126,27 +126,65 @@ def extract_brand_from_name_heuristic(wine_name_str):
     if potential_brand.lower() in [term.lower() for term in ["rhone", "paso robles", "napa", "valley", "red", "white", "rose"]]: return ""
     return potential_brand.lower() 
 
+def _style_only_from_embedding_text(embedding_text: str) -> str:
+    """Strip identity-ish lines from our canonical embedding_text.
+
+    The v3 index stores `embedding_text` in metadata. It typically contains lines like:
+      Name: ...
+      Producer: ...
+      Vintage: ...
+      Price: ...
+
+    For *recommendation retrieval* we want style/taste, not identity.
+    """
+    if not embedding_text:
+        return ""
+
+    keep = []
+    for ln in embedding_text.splitlines():
+        s = ln.strip()
+        if not s:
+            continue
+        low = s.lower()
+        if low.startswith("name:"):
+            continue
+        if low.startswith("producer:"):
+            continue
+        if low.startswith("vintage:"):
+            continue
+        if low.startswith("price:"):
+            continue
+        keep.append(s)
+
+    out = "\n".join(keep).strip()
+    return out or embedding_text
+
+
 def create_text_for_query_embedding(wine_metadata, *, include_identity: bool = True):
     """Build query text for embeddings.
 
-    Key fix for KLWines-style catalogs:
-    - If we include *too much identity* (producer/name/vintage), nearest neighbors
-      become the same bottle across vintages.
-    - For recommendation retrieval we want more *style-level* similarity.
+    Major change (v3 index): if `embedding_text` exists in metadata, we use it as the
+    source-of-truth (it was produced from structured JSON-LD) instead of rebuilding
+    an embedding prompt from ad-hoc fields.
 
-    Set include_identity=False to down-weight exact producer/name matching.
+    include_identity=False will strip identity-heavy lines from embedding_text.
     """
 
     if not wine_metadata or not isinstance(wine_metadata, dict):
         return "No wine data available."
 
+    # Use canonical embedding_text if present (v3 index)
+    embedding_text = (wine_metadata.get("embedding_text") or "").strip()
+    if embedding_text:
+        return embedding_text if include_identity else _style_only_from_embedding_text(embedding_text)
+
+    # Fallback to legacy construction (older indexes)
     parts = []
     wine_name_str = wine_metadata.get("name")
 
     if include_identity and wine_name_str:
         parts.append(f"Wine: {wine_name_str}.")
 
-    # Producer is helpful, but can dominate; only include when include_identity=True
     if include_identity:
         brand_for_embedding = get_field(wine_metadata, "brand")
         if brand_for_embedding == "N/A" or not brand_for_embedding:
@@ -156,8 +194,11 @@ def create_text_for_query_embedding(wine_metadata, *, include_identity: bool = T
 
     if wine_metadata.get("category"):
         parts.append(f"Type/Category: {wine_metadata['category']}.")
-    if wine_metadata.get("country_of_origin"):
-        parts.append(f"Origin: {wine_metadata['country_of_origin']}.")
+
+    origin = wine_metadata.get("country_of_origin") or wine_metadata.get("country")
+    if origin:
+        parts.append(f"Origin: {origin}.")
+
     if wine_metadata.get("size"):
         parts.append(f"Bottle Size: {wine_metadata['size']}.")
 
@@ -165,42 +206,14 @@ def create_text_for_query_embedding(wine_metadata, *, include_identity: bool = T
     if description_text:
         parts.append(f"\nTasting notes:\n{description_text}")
 
-    # Keywords can be identity-heavy (producer/name). Keep them, but bias toward the tail terms
-    # which more often contain varietal/region/style.
     keywords_list = wine_metadata.get("keywords_list")
     if keywords_list and isinstance(keywords_list, list):
         tail = keywords_list[-8:] if len(keywords_list) > 8 else keywords_list
         parts.append(f"\nTags/Keywords: {', '.join(tail)}.")
 
-    # Keep review text minimal (1–2 snippets) to reduce noise
-    reviews_section_for_embedding = []
-    reviews_json_str = wine_metadata.get("reviews_json", "[]")
-    try:
-        reviews_data = json.loads(reviews_json_str)
-        if isinstance(reviews_data, list):
-            for review_item in reviews_data[:2]:
-                if isinstance(review_item, dict) and review_item.get("review"):
-                    txt = str(review_item.get("review"))
-                    txt = re.sub(r"\s+", " ", txt).strip()
-                    if len(txt) > 260:
-                        txt = txt[:260].rstrip() + "…"
-                    author = review_item.get("author", "Critic")
-                    rating = review_item.get("rating")
-                    if rating is not None:
-                        reviews_section_for_embedding.append(f"Critic ({author}) {rating}: {txt}")
-                    else:
-                        reviews_section_for_embedding.append(f"Critic ({author}): {txt}")
-    except Exception:
-        pass
-
-    if reviews_section_for_embedding:
-        parts.append("\nCritic notes:\n" + "\n".join(reviews_section_for_embedding))
-
     full_text = "\n".join(filter(None, parts))
     full_text = "\n".join([line.strip() for line in full_text.splitlines() if line.strip()])
-    if not full_text.strip():
-        return f"Basic wine entry for {wine_metadata.get('name', 'Unknown Wine')}."
-    return full_text
+    return full_text or f"Basic wine entry for {wine_metadata.get('name', 'Unknown Wine')}."
 
 def generate_embedding(text_to_embed):
     if not text_to_embed or not isinstance(text_to_embed, str) or not text_to_embed.strip():
