@@ -20,6 +20,18 @@ SESSION_DEFAULTS = {
     "new_search_triggered": False,
     "initial_load_complete": False,
     "base_blurb_fetched": False,
+
+    # Sommelier UX: two entry modes
+    "entry_mode": "Wine I love",
+    "vibe_text": "",
+
+    # Taste profile sliders (session only)
+    "taste_body": 50,          # 0 light -> 100 full
+    "taste_acidity": 50,       # 0 low  -> 100 high
+    "taste_tannin": 50,        # 0 soft -> 100 firm
+    "taste_fruit_earth": 50,   # 0 fruit -> 100 earth
+    "taste_oak": 30,           # 0 none -> 100 oaky
+
     # Session-only preference signals
     "liked_wines": [],  # list[str] of wine names the user liked
     "disliked_ids": set(),  # set[str] of pinecone_ids to hide
@@ -49,6 +61,7 @@ def reset_session_state():
     # Reset input widgets
     st.session_state["wine_selectbox_main"] = ""
     st.session_state["wine_query"] = ""
+    st.session_state["vibe_text"] = ""
 
 
 #######################################
@@ -165,6 +178,34 @@ def display_wine_card(
 # Main Streamlit App Layout
 #######################################
 
+def _assign_flight_tiers(recs: list[dict]) -> list[dict]:
+    """Tag recs as a 'flight': core / explore / wildcard."""
+    out = []
+    for i, r in enumerate(recs or []):
+        r2 = dict(r)
+        if i < 3:
+            r2["flight_tier"] = "core"
+        elif i < 5:
+            r2["flight_tier"] = "explore"
+        else:
+            r2["flight_tier"] = "wildcard"
+        out.append(r2)
+    return out
+
+
+def _apply_session_filters(recs: list[dict]) -> list[dict]:
+    filtered = []
+    for w in recs or []:
+        pid = w.get("pinecone_id")
+        producer = (w.get("brand") or "").strip().lower()
+        if pid and pid in st.session_state.disliked_ids:
+            continue
+        if producer and producer in st.session_state.blocked_producers:
+            continue
+        filtered.append(w)
+    return filtered
+
+
 def run_new_search(wine_name: str, price_min: float, price_max: float):
     """Start a brand-new search and reset result-related state."""
     st.session_state.new_search_triggered = True
@@ -179,26 +220,67 @@ def run_new_search(wine_name: str, price_min: float, price_max: float):
     with st.spinner(f"Finding wines similar to '{wine_name}'… 🥂"):
         base_details, rec_list_meta_only, _ = wine_recommendation.recommend_wines_for_streamlit(
             user_wine_name_input=wine_name,
-            top_k=5,
+            top_k=6,
             price_min=price_min,
             price_max=price_max,
             min_confidence_score=wine_recommendation.DEFAULT_CONFIDENCE_SCORE,
         )
 
     st.session_state.base_wine_for_display = base_details
+    filtered = _apply_session_filters(rec_list_meta_only or [])
+    st.session_state.recommendations_list = _assign_flight_tiers(filtered)
+    st.session_state.initial_load_complete = True
 
-    # Apply session-only filters (dislikes/producer blocks)
-    filtered = []
-    for w in rec_list_meta_only or []:
-        pid = w.get("pinecone_id")
-        producer = (w.get("brand") or "").strip().lower()
-        if pid and pid in st.session_state.disliked_ids:
-            continue
-        if producer and producer in st.session_state.blocked_producers:
-            continue
-        filtered.append(w)
 
-    st.session_state.recommendations_list = filtered
+def _taste_words():
+    def bucket(val, low, high, low_word, mid_word, high_word):
+        if val <= low:
+            return low_word
+        if val >= high:
+            return high_word
+        return mid_word
+
+    body = bucket(st.session_state.taste_body, 30, 70, "light-bodied", "medium-bodied", "full-bodied")
+    acid = bucket(st.session_state.taste_acidity, 30, 70, "low-acid", "balanced acidity", "high-acid")
+    tann = bucket(st.session_state.taste_tannin, 30, 70, "soft tannins", "moderate tannins", "firm tannins")
+    fe = bucket(st.session_state.taste_fruit_earth, 30, 70, "fruit-forward", "balanced fruit/earth", "earthy/savory")
+    oak = bucket(st.session_state.taste_oak, 25, 65, "little/no oak", "some oak", "noticeable oak")
+    return body, acid, tann, fe, oak
+
+
+def build_vibe_prompt(vibe_text: str) -> str:
+    body, acid, tann, fe, oak = _taste_words()
+    vibe_text = (vibe_text or "").strip()
+    return (
+        f"{vibe_text}\n\n"
+        f"Preferences: {body}; {acid}; {tann}; {fe}; {oak}. "
+        f"Recommend a small curated flight with a few close matches and a couple of adjacent explorations."
+    ).strip()
+
+
+def run_new_vibe_search(vibe_text: str, price_min: float, price_max: float):
+    st.session_state.new_search_triggered = True
+    st.session_state.base_wine_for_display = None
+    st.session_state.recommendations_list = []
+    st.session_state.base_blurb_for_display = None
+    st.session_state.rag_explanations = {}
+    st.session_state.fetch_rag_next_idx = 0
+    st.session_state.initial_load_complete = False
+    st.session_state.base_blurb_fetched = True  # no base blurb in vibe mode
+
+    prompt = build_vibe_prompt(vibe_text)
+
+    with st.spinner("AI Somm is thinking about your vibe…"):
+        pseudo_base, recs = wine_recommendation.recommend_wines_from_prompt(
+            prompt_text=prompt,
+            top_k=6,
+            price_min=price_min,
+            price_max=price_max,
+        )
+
+    st.session_state.base_wine_for_display = pseudo_base
+    filtered = _apply_session_filters(recs or [])
+    st.session_state.recommendations_list = _assign_flight_tiers(filtered)
     st.session_state.initial_load_complete = True
 
 
@@ -219,7 +301,15 @@ def main_app_layout():
 
     # --- Sidebar controls ---
     with st.sidebar:
-        st.header("Controls")
+        st.header("Sommelier Controls")
+
+        st.session_state.entry_mode = st.radio(
+            "How do you want to start?",
+            options=["Wine I love", "Describe a vibe"],
+            horizontal=False,
+            key="entry_mode",
+        )
+
         if st.button("🔄 Reset", use_container_width=True):
             reset_session_state()
             st.rerun()
@@ -229,7 +319,17 @@ def main_app_layout():
             for w in st.session_state.liked_wines[-5:][::-1]:
                 st.write(f"• {w}")
 
-        st.header("💰 Price Filter")
+        if st.session_state.entry_mode == "Describe a vibe":
+            st.header("Your Taste Profile")
+            st.caption("Optional: tweak these if you know your preferences.")
+
+            st.slider("Body", 0, 100, st.session_state.taste_body, key="taste_body")
+            st.slider("Acidity", 0, 100, st.session_state.taste_acidity, key="taste_acidity")
+            st.slider("Tannin (reds)", 0, 100, st.session_state.taste_tannin, key="taste_tannin")
+            st.slider("Fruit ↔ Earth", 0, 100, st.session_state.taste_fruit_earth, key="taste_fruit_earth")
+            st.slider("Oak", 0, 100, st.session_state.taste_oak, key="taste_oak")
+
+        st.header("💰 Price")
         min_catalog_price = 0.0
         max_slider_price = 200.0
         price_range = st.slider(
@@ -250,45 +350,67 @@ def main_app_layout():
             st.caption(f"AI Somm tasting notes: {done}/{total}")
             st.progress(done / max(total, 1))
 
-    # --- Wine selection input ---
-    st.text_input(
-        "Search (optional)",
-        value="",
-        placeholder="Try: Pinot Noir, Ridge, Chablis…",
-        key="wine_query",
-        help="Type a few characters to narrow the wine list.",
-    )
-    query = (st.session_state.get("wine_query") or "").strip().lower()
-    if query:
-        filtered_wines = [w for w in wine_names_list if query in w.lower()]
-        # Keep the list snappy even if the match set is huge
-        filtered_wines = filtered_wines[:250]
+    # --- Entry UI ---
+    user_selected_wine_name = ""
+
+    if st.session_state.entry_mode == "Wine I love":
+        st.text_input(
+            "Search (optional)",
+            value="",
+            placeholder="Try: Pinot Noir, Ridge, Chablis…",
+            key="wine_query",
+            help="Type a few characters to narrow the wine list.",
+        )
+        query = (st.session_state.get("wine_query") or "").strip().lower()
+        if query:
+            filtered_wines = [w for w in wine_names_list if query in w.lower()]
+            filtered_wines = filtered_wines[:250]
+        else:
+            filtered_wines = wine_names_list
+
+        user_selected_wine_name = st.selectbox(
+            "Tell me a wine you love…",
+            options=[""] + filtered_wines,
+            index=0,
+            help="Type to search, then pick a wine.",
+            key="wine_selectbox_main",
+        )
+
+        if not wine_names_list:
+            st.caption("Wine list for autocomplete is loading or unavailable.")
+
+        submit_button = st.button(
+            "✨ Pour me a flight",
+            type="primary",
+            use_container_width=True,
+        )
+
+        if submit_button and user_selected_wine_name:
+            run_new_search(user_selected_wine_name, price_min_filter, price_max_filter)
+            st.rerun()
+
     else:
-        filtered_wines = wine_names_list
+        st.text_area(
+            "Describe what you're in the mood for",
+            placeholder="Examples: 'crisp white with high acidity for oysters' / 'juicy red, not too oaky, pizza night' / 'sparkling, celebratory, not too sweet'",
+            key="vibe_text",
+            height=100,
+        )
 
-    user_selected_wine_name = st.selectbox(
-        "Tell us a wine you like…",
-        options=[""] + filtered_wines,
-        index=0,
-        help="Type to search, then pick a wine.",
-        key="wine_selectbox_main",
-    )
+        body, acid, tann, fe, oak = _taste_words()
+        st.caption(f"Taste profile: {body} • {acid} • {tann} • {fe} • {oak}")
 
-    if not wine_names_list:
-        st.caption("Wine list for autocomplete is loading or unavailable.")
+        submit_button = st.button(
+            "✨ Pour me a flight",
+            type="primary",
+            use_container_width=True,
+        )
 
-    submit_button = st.button(
-        "✨ Find My Wine Matches!",
-        type="primary",
-        use_container_width=True,
-    )
+        if submit_button and (st.session_state.get("vibe_text") or "").strip():
+            run_new_vibe_search(st.session_state.vibe_text, price_min_filter, price_max_filter)
+            st.rerun()
 
     st.markdown("---")
-
-    # --- Initial search ---
-    if submit_button and user_selected_wine_name:
-        run_new_search(user_selected_wine_name, price_min_filter, price_max_filter)
-        st.rerun()
 
     # --- Display results ---
     if st.session_state.base_wine_for_display:
@@ -309,15 +431,29 @@ def main_app_layout():
         st.markdown("---")
 
         if st.session_state.recommendations_list:
-            st.markdown("## ✨ AI Somm's Picks")
+            st.markdown("## ✨ AI Somm's Flight")
+            st.caption("A curated set: close matches first, then a couple of explorations.")
 
-            recommendations_to_show = st.session_state.recommendations_list
-            num_recs_to_show = len(recommendations_to_show)
-            cols_to_display = min(num_recs_to_show, 3) if num_recs_to_show > 0 else 1
+            tier_labels = {
+                "core": "Core matches",
+                "explore": "Adjacent explorations",
+                "wildcard": "Wildcard",
+            }
 
-            if num_recs_to_show > 0:
+            # Group by tier, preserve order
+            tiers = ["core", "explore", "wildcard"]
+            for tier in tiers:
+                tier_recs = [r for r in st.session_state.recommendations_list if r.get("flight_tier") == tier]
+                if not tier_recs:
+                    continue
+
+                st.markdown(f"### {tier_labels.get(tier, tier.title())}")
+
+                num_recs_to_show = len(tier_recs)
+                cols_to_display = min(num_recs_to_show, 3) if num_recs_to_show > 0 else 1
                 cols = st.columns(cols_to_display)
-                for i, rec_wine_meta in enumerate(recommendations_to_show):
+
+                for i, rec_wine_meta in enumerate(tier_recs):
                     wine_pinecone_id = rec_wine_meta.get("pinecone_id")
                     rag_content_for_card = (
                         st.session_state.rag_explanations.get(wine_pinecone_id) if wine_pinecone_id else None
@@ -326,14 +462,11 @@ def main_app_layout():
                     with cols[i % cols_to_display]:
                         display_wine_card(
                             rec_wine_meta,
-                            card_key_prefix=f"rec_{i}",
+                            card_key_prefix=f"rec_{tier}_{i}",
                             is_base_wine=False,
                             rag_explanation_content=rag_content_for_card,
                         )
 
-                        # Feedback actions (session-only):
-                        # - 👍 re-anchors the search on this recommended wine
-                        # - 👎 hides this wine (and optionally blocks its producer) for this session
                         if wine_pinecone_id:
                             fcol1, fcol2 = st.columns(2)
 
@@ -346,13 +479,12 @@ def main_app_layout():
                                         st.rerun()
 
                             with fcol2:
-                                if st.button("👎 Less like this", key=f"fb_down_{wine_pinecone_id}"):
+                                if st.button("👎 Not my style", key=f"fb_down_{wine_pinecone_id}"):
                                     st.session_state.disliked_ids.add(wine_pinecone_id)
                                     producer = (rec_wine_meta.get("brand") or "").strip().lower()
                                     if producer:
                                         st.session_state.blocked_producers.add(producer)
 
-                                    # Remove it from the current list immediately
                                     st.session_state.recommendations_list = [
                                         w for w in st.session_state.recommendations_list
                                         if w.get("pinecone_id") != wine_pinecone_id

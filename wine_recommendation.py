@@ -413,6 +413,107 @@ def recommend_wines_for_streamlit(user_wine_name_input, top_k=5, price_min=0.0, 
     recommendations = search_similar_wines(base_wine_metadata, top_k=top_k, price_min=price_min, price_max=price_max)
     return base_wine_metadata, recommendations, None # Return None for base_wine_blurb, app.py will fetch it
 
+
+def recommend_wines_from_prompt(
+    prompt_text: str,
+    top_k: int = 8,
+    price_min: float = 0.0,
+    price_max: float = 999999.0,
+    max_per_any_producer: int = MAX_WINES_FROM_ANY_SINGLE_PRODUCER,
+):
+    """Recommend wines directly from a free-text prompt ("vibe" mode).
+
+    This skips base-wine identification and instead queries Pinecone using an
+    embedding of the user's prompt.
+
+    Returns: (pseudo_base, recommendations)
+    """
+    prompt_text = (prompt_text or "").strip()
+    if not prompt_text:
+        return None, []
+
+    print(f"\n🍇 {time.strftime('%Y-%m-%d %H:%M:%S')} - Starting vibe recommendation for prompt: '{prompt_text[:120]}'")
+    query_vector = generate_embedding(prompt_text)
+    if np.all(np.array(query_vector) == 0):
+        st.warning("Could not process that prompt. Try describing the wine in a different way.")
+        return None, []
+
+    pinecone_filter = {}
+    price_filters = []
+    try:
+        p_min = float(price_min)
+        p_max = float(price_max)
+    except Exception:
+        p_min = 0.0
+        p_max = 999999.0
+
+    if p_min > 0:
+        price_filters.append({"price": {"$gte": p_min}})
+    if p_max < 999999.0:
+        price_filters.append({"price": {"$lte": p_max}})
+    if price_filters:
+        pinecone_filter["$and"] = price_filters
+
+    num_candidates_to_fetch = max(top_k * 12, 50)
+    try:
+        query_result = index.query(
+            vector=query_vector,
+            filter=pinecone_filter if pinecone_filter else None,
+            top_k=num_candidates_to_fetch,
+            include_metadata=True,
+        )
+    except Exception as e:
+        st.error(f"Search failed: {e}")
+        return None, []
+
+    matches = (query_result or {}).get("matches") or []
+    if not matches:
+        return None, []
+
+    # Diversity: cap per producer
+    producer_counts_in_recs = {}
+    processed_ids = set()
+    final_recommendations = []
+
+    for match in matches:
+        if len(final_recommendations) >= top_k:
+            break
+        if not match or not match.get("metadata"):
+            continue
+
+        metadata = match["metadata"]
+        pinecone_vector_id = match.get("id")
+        if not pinecone_vector_id or pinecone_vector_id in processed_ids:
+            continue
+
+        current_wine_name = metadata.get("name", "")
+        candidate_brand_from_meta = metadata.get("brand")
+        candidate_producer_for_diversity = extract_brand_from_name_heuristic(current_wine_name)
+        if candidate_brand_from_meta and isinstance(candidate_brand_from_meta, str) and candidate_brand_from_meta.strip() and candidate_brand_from_meta != "N/A":
+            candidate_producer_for_diversity = candidate_brand_from_meta.lower()
+        elif candidate_producer_for_diversity:
+            candidate_producer_for_diversity = candidate_producer_for_diversity.lower()
+        else:
+            candidate_producer_for_diversity = ""
+
+        if candidate_producer_for_diversity and producer_counts_in_recs.get(candidate_producer_for_diversity, 0) >= max_per_any_producer:
+            continue
+
+        if candidate_producer_for_diversity:
+            producer_counts_in_recs[candidate_producer_for_diversity] = producer_counts_in_recs.get(candidate_producer_for_diversity, 0) + 1
+
+        metadata["pinecone_id"] = pinecone_vector_id
+        metadata["similarity_score"] = match.get("score", 0.0)
+        final_recommendations.append(metadata)
+        processed_ids.add(pinecone_vector_id)
+
+    pseudo_base = {
+        "name": f"Your vibe: {prompt_text}",
+        "description": "A sommelier-style prompt (not a specific bottle).",
+        "brand": "AI Somm",
+    }
+    return pseudo_base, final_recommendations
+
 def _run_standalone_recommender_ui(): 
     st.set_page_config(page_title="🍷 Wine Recommender AI (Module Test)", layout="wide")
     st.title("🍇 AI Wine Recommender (Module Test)")
