@@ -580,7 +580,7 @@ def search_similar_wines(base_wine_metadata, top_k=5, price_min=0.0, price_max=9
     # Adaptive constraints: start strict, relax if we can't fill top_k.
     allow_cuvee_duplicates = False
 
-    print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Processing {len(query_result['matches'])} candidates for diversity (top_k={top_k}, max_same_as_base={max_same_producer_as_base}, max_per_any={max_per_any_producer})...")
+    print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Processing {len(candidates)} candidates for diversity (top_k={top_k}, max_same_as_base={max_same_producer_as_base}, max_per_any={max_per_any_producer})...")
     print(f"--- [{time.strftime('%Y-%m-%d %H:%M:%S')}] Base Wine For Diversity: Name='{base_wine_metadata.get('name')}', Effective Producer='{base_producer_for_diversity}' ---")
 
     for match_idx, match in enumerate(chosen_matches):
