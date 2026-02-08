@@ -307,7 +307,7 @@ def main_app_layout():
     with st.sidebar:
         st.header("Sommelier Controls")
 
-        st.session_state.entry_mode = st.radio(
+        entry_mode = st.radio(
             "How do you want to start?",
             options=["Wine I love", "Describe a vibe"],
             horizontal=False,
