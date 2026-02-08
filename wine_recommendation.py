@@ -379,39 +379,165 @@ def _normalize_cuvee_key(name: str) -> str:
     return s
 
 
+def _pinecone_query_by_text(query_text: str, *, top_k: int, price_min: float, price_max: float):
+    query_vector = generate_embedding(query_text)
+    if np.all(np.array(query_vector) == 0):
+        return []
+
+    pinecone_filter = {}
+    price_filters = []
+    try:
+        p_min = float(price_min)
+        p_max = float(price_max)
+    except Exception:
+        p_min = 0.0
+        p_max = 999999.0
+
+    if p_min > 0:
+        price_filters.append({"price": {"$gte": p_min}})
+    if p_max < 999999.0:
+        price_filters.append({"price": {"$lte": p_max}})
+    if price_filters:
+        pinecone_filter["$and"] = price_filters
+
+    try:
+        query_result = index.query(
+            vector=query_vector,
+            filter=pinecone_filter if pinecone_filter else None,
+            top_k=top_k,
+            include_metadata=True,
+        )
+    except Exception as e:
+        print(f"❌ {time.strftime('%Y-%m-%d %H:%M:%S')} - Pinecone query failed: {e}")
+        return []
+
+    return (query_result or {}).get("matches") or []
+
+
+def _build_query_variants(base_wine_metadata: dict) -> list[str]:
+    """Generate multiple query texts to broaden the candidate neighborhood."""
+
+    # Canonical profile, style-only
+    style_q = create_text_for_query_embedding(base_wine_metadata, include_identity=False)
+
+    # Varietal/region-ish tail keywords can widen the neighborhood
+    keywords = base_wine_metadata.get("keywords") or ""
+    if not keywords and base_wine_metadata.get("keywords_list"):
+        try:
+            keywords = ",".join(base_wine_metadata.get("keywords_list") or [])
+        except Exception:
+            keywords = ""
+    kws = [k.strip() for k in str(keywords).split(",") if k.strip()]
+    tail = kws[-10:] if len(kws) > 10 else kws
+    varietal_q = " ".join(tail)
+
+    # Category + origin anchor
+    cat = base_wine_metadata.get("category") or ""
+    origin = base_wine_metadata.get("country_of_origin") or base_wine_metadata.get("country") or ""
+    cat_q = f"Category: {cat}. Origin: {origin}.".strip()
+
+    queries = []
+    if style_q:
+        queries.append(style_q)
+    if varietal_q:
+        queries.append(f"Varietal/Style cues: {varietal_q}")
+    if cat_q and cat_q != "Category: . Origin: .":
+        queries.append(cat_q)
+
+    # De-dupe identical queries
+    uniq = []
+    seen = set()
+    for q in queries:
+        qn = " ".join(q.split())
+        if qn and qn not in seen:
+            uniq.append(q)
+            seen.add(qn)
+    return uniq
+
+
+def _mmr_select(matches: list[dict], *, k: int) -> list[dict]:
+    """Simple MMR-like greedy diversification using heuristics.
+
+    We don't have raw vectors here, so we approximate diversity using metadata keys:
+    - producer
+    - normalized cuvée key
+    - category
+
+    This avoids hardcoding and works across datasets.
+    """
+
+    selected: list[dict] = []
+    seen_producers: dict[str, int] = {}
+    seen_cuvees: set[str] = set()
+
+    for m in matches:
+        if len(selected) >= k:
+            break
+        md = (m.get("metadata") or {})
+        name = md.get("name", "")
+        producer = (md.get("brand") or "").strip().lower()
+        cuvee = _normalize_cuvee_key(name)
+
+        # soft penalties: allow some repetition if needed
+        prod_count = seen_producers.get(producer, 0) if producer else 0
+        if cuvee and cuvee in seen_cuvees and len(selected) < max(2, k // 2):
+            # early in the list, try to avoid duplicates
+            continue
+        if producer and prod_count >= 2 and len(selected) < k - 1:
+            continue
+
+        selected.append(m)
+        if producer:
+            seen_producers[producer] = prod_count + 1
+        if cuvee:
+            seen_cuvees.add(cuvee)
+
+    return selected
+
+
 def search_similar_wines(base_wine_metadata, top_k=5, price_min=0.0, price_max=999999.0, 
                          max_same_producer_as_base=MAX_SAME_PRODUCER_RECS, 
                          max_per_any_producer=MAX_WINES_FROM_ANY_SINGLE_PRODUCER): 
     print(f"🔎 {time.strftime('%Y-%m-%d %H:%M:%S')} - Searching similar to: '{base_wine_metadata.get('name', 'Unknown')}'")
     # Style-first query to avoid returning the same producer/bottle across vintages.
-    query_text = create_text_for_query_embedding(base_wine_metadata, include_identity=False)
-    query_vector = generate_embedding(query_text)
-    if np.all(np.array(query_vector) == 0): st.error("Could not generate search profile."); return []
-    pinecone_filter = {}; price_filters = []
-    try: p_min = float(price_min); p_max = float(price_max)
-    except: p_min = 0.0; p_max = 999999.0 
-    if p_min > 0: price_filters.append({"price": {"$gte": p_min}})
-    if p_max < 999999.0: price_filters.append({"price": {"$lte": p_max}})
-    if price_filters: pinecone_filter["$and"] = price_filters
-    if pinecone_filter: print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Pinecone filter: {pinecone_filter}")
-    else: print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - No price filter.")
-    query_result = None
-    # Fetch a lot more than top_k to avoid "same bottle across vintages" dominating the head.
-    # KLWines-style catalogs often have many near-duplicates.
-    num_candidates_to_fetch = max(top_k * 50, 250)
-    try:
-        print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Querying Pinecone for {num_candidates_to_fetch} candidates...")
-        query_result = index.query(vector=query_vector, filter=pinecone_filter if pinecone_filter else None, top_k=num_candidates_to_fetch, include_metadata=True)
-        print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Pinecone query found {len(query_result.get('matches', []))} raw matches.")
-    except Exception as e: st.error(f"Search failed: {e}"); print(f"❌ {time.strftime('%Y-%m-%d %H:%M:%S')} - Pinecone query failed: {e}"); return []
-    if not query_result or "matches" not in query_result or not query_result["matches"]: print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - No matches from Pinecone."); return []
-    
+    # Multi-query retrieval to broaden neighborhood
+    query_variants = _build_query_variants(base_wine_metadata)
+    if not query_variants:
+        st.error("Could not generate search profile.")
+        return []
+
+    num_candidates_to_fetch = max(top_k * 80, 400)
+    raw_matches = []
+    for q in query_variants:
+        raw_matches.extend(
+            _pinecone_query_by_text(q, top_k=num_candidates_to_fetch, price_min=price_min, price_max=price_max)
+        )
+
+    if not raw_matches:
+        print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - No matches from Pinecone.")
+        return []
+
+    # De-dupe by vector id, keep best score
+    best_by_id = {}
+    for m in raw_matches:
+        mid = m.get("id")
+        if not mid:
+            continue
+        if mid not in best_by_id or (m.get("score", 0.0) > best_by_id[mid].get("score", 0.0)):
+            best_by_id[mid] = m
+
+    candidates = list(best_by_id.values())
+    candidates.sort(key=lambda x: x.get("score", 0.0), reverse=True)
+
+    # Diversify with MMR-like selection
+    chosen_matches = _mmr_select(candidates, k=top_k)
+
     final_recommendations = []
     base_wine_name_lower = base_wine_metadata.get("name", "").lower()
     base_cuvee_key = _normalize_cuvee_key(base_wine_metadata.get("name", ""))
     seen_cuvee_keys = set([base_cuvee_key]) if base_cuvee_key else set()
     base_wine_brand_from_meta = base_wine_metadata.get("brand")
-    base_producer_for_diversity = extract_brand_from_name_heuristic(base_wine_metadata.get("name", "")) 
+    base_producer_for_diversity = extract_brand_from_name_heuristic(base_wine_metadata.get("name", ""))
     if base_wine_brand_from_meta and isinstance(base_wine_brand_from_meta, str) and base_wine_brand_from_meta.strip() and base_wine_brand_from_meta != "N/A":
         base_producer_for_diversity = base_wine_brand_from_meta.lower()
     elif base_producer_for_diversity: base_producer_for_diversity = base_producer_for_diversity.lower()
@@ -425,15 +551,10 @@ def search_similar_wines(base_wine_metadata, top_k=5, price_min=0.0, price_max=9
     print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Processing {len(query_result['matches'])} candidates for diversity (top_k={top_k}, max_same_as_base={max_same_producer_as_base}, max_per_any={max_per_any_producer})...")
     print(f"--- [{time.strftime('%Y-%m-%d %H:%M:%S')}] Base Wine For Diversity: Name='{base_wine_metadata.get('name')}', Effective Producer='{base_producer_for_diversity}' ---")
 
-    for match_idx, match in enumerate(query_result["matches"]):
+    for match_idx, match in enumerate(chosen_matches):
         if len(final_recommendations) >= top_k:
             print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Reached {top_k} recs.")
             break
-
-        # If we're halfway through candidates and still have very few results, relax cuvée dedupe.
-        if (not allow_cuvee_duplicates) and match_idx > (len(query_result["matches"]) // 2) and len(final_recommendations) < max(2, top_k // 2):
-            allow_cuvee_duplicates = True
-            print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - Relaxing cuvée dedupe to fill recommendations.")
         if not match or not match.get("metadata"): print(f"⚠️ {time.strftime('%Y-%m-%d %H:%M:%S')} - Candidate {match_idx+1} malformed."); continue 
         
         metadata = match["metadata"]; score = match.get("score", 0.0); pinecone_vector_id = match.get("id")
