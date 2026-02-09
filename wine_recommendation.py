@@ -528,7 +528,12 @@ def search_similar_wines(base_wine_metadata, top_k=5, price_min=0.0, price_max=9
         return []
 
     num_candidates_to_fetch = max(top_k * 80, 400)
+
+    # Always initialize these so downstream logging can’t crash with NameError/UnboundLocalError
+    # on unexpected early-exit paths.
     raw_matches = []
+    candidates = []
+
     for q in query_variants:
         raw_matches.extend(
             _pinecone_query_by_text(q, top_k=num_candidates_to_fetch, price_min=price_min, price_max=price_max)
